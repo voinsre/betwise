@@ -1,10 +1,7 @@
-// In production (Railway): NEXT_PUBLIC_API_URL is the backend's public URL
-// e.g. https://betwise-production.up.railway.app — fetch calls go directly.
-// In local dev: not set, so we use relative paths through Next.js rewrites.
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || "").replace(
-  /^http:\/\//,
-  "https://"
-);
+// All API calls use relative URLs. The Next.js Route Handler at
+// app/api/[...path]/route.ts proxies them to the backend using
+// BACKEND_URL (a runtime env var — no build-time dependency).
+const API_URL = "";
 
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
