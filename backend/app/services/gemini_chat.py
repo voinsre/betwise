@@ -1,6 +1,6 @@
 """Gemini chat service with structured function calling — Phase 7.
 
-Uses Google Gemini 2.0 Flash with 4 tool functions that route to
+Uses Google Gemini 2.5 Pro with 4 tool functions that route to
 the backend prediction engine and ticket builder for real data.
 """
 
@@ -12,6 +12,7 @@ import google.generativeai as genai
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.config import settings
+from app.services.live_fixtures import get_upcoming_fixture_ids
 from app.services.prediction_engine import PredictionEngine
 from app.services.ticket_builder import TicketBuilder
 
@@ -31,6 +32,7 @@ IMPORTANT RULES:
 - If anything is ambiguous, ask for clarification.
 - Star ratings: ★★★ = confidence 80+, ★★☆ = 65-79, ★☆☆ = 50-64
 - When showing predictions, format them as a clear table or list with match, market, selection, odds, edge, and confidence.
+- All predictions are automatically filtered to only show upcoming (not started) fixtures. If no games are available, suggest the user check back later or ask about tomorrow's fixtures.
 - Today's date is {today}.
 """.strip()
 
@@ -302,6 +304,10 @@ class GeminiChatService:
             else:
                 preds = await engine.get_predictions_for_date(target_date)
 
+            # Filter to upcoming (NS) fixtures only — live check via API-Football
+            upcoming_ids = await get_upcoming_fixture_ids(target_date, self.session_factory)
+            preds = [p for p in preds if p["fixture_id"] in upcoming_ids]
+
             # Apply optional filters
             market_filter = args.get("market")
             if market_filter:
@@ -310,6 +316,13 @@ class GeminiChatService:
             min_conf = args.get("min_confidence")
             if min_conf is not None:
                 preds = [p for p in preds if p["confidence_score"] >= int(min_conf)]
+
+            if not preds:
+                return {
+                    "predictions": [],
+                    "count": 0,
+                    "message": "No upcoming games with predictions for this date. All fixtures may have already kicked off or finished.",
+                }
 
             return {"predictions": preds, "count": len(preds)}
 
@@ -322,17 +335,31 @@ class GeminiChatService:
             preferred_markets = args.get("preferred_markets")
             min_confidence = int(args.get("min_confidence", 60))
 
+            # Get upcoming fixture IDs for filtering
+            upcoming_ids = await get_upcoming_fixture_ids(target_date, self.session_factory)
+
             return await builder.build_ticket(
                 target_date=target_date,
                 num_games=num_games,
                 target_odds=target_odds,
                 preferred_markets=preferred_markets,
                 min_confidence=min_confidence,
+                upcoming_fixture_ids=upcoming_ids,
             )
 
         elif name == "analyze_fixture":
             fixture_id = int(args["fixture_id"])
-            return await engine.analyze_fixture(fixture_id)
+            analysis = await engine.analyze_fixture(fixture_id)
+
+            # Warn if fixture is no longer upcoming
+            upcoming_ids = await get_upcoming_fixture_ids(date.today(), self.session_factory)
+            if fixture_id not in upcoming_ids and "error" not in analysis:
+                analysis["warning"] = (
+                    "This fixture has already started or finished. "
+                    "Predictions are for reference only — not bettable."
+                )
+
+            return analysis
 
         elif name == "swap_ticket_game":
             ticket_id = str(args["ticket_id"])
@@ -340,11 +367,14 @@ class GeminiChatService:
             preference = args.get("preference", "safer")
 
             target_date = date.today()
+            upcoming_ids = await get_upcoming_fixture_ids(target_date, self.session_factory)
+
             return await builder.swap_game(
                 ticket_id=ticket_id,
                 fixture_id_to_remove=fixture_id_to_remove,
                 target_date=target_date,
                 preference=preference,
+                upcoming_fixture_ids=upcoming_ids,
             )
 
         else:

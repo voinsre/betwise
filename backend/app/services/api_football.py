@@ -140,9 +140,12 @@ class APIFootballClient:
 
     # ── Fixtures ─────────────────────────────────────────────
 
-    async def get_fixtures_by_date(self, date: str) -> list[dict]:
-        """GET /fixtures?date={YYYY-MM-DD}"""
-        return await self._get("/fixtures", {"date": date})
+    async def get_fixtures_by_date(self, date: str, timezone: str | None = None) -> list[dict]:
+        """GET /fixtures?date={YYYY-MM-DD}&timezone={tz}"""
+        params: dict[str, str] = {"date": date}
+        if timezone:
+            params["timezone"] = timezone
+        return await self._get("/fixtures", params)
 
     async def get_fixtures_by_league_season(
         self, league_id: int, season: int, status: str = "FT"

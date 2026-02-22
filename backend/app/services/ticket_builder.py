@@ -37,6 +37,7 @@ class TicketBuilder:
         preferred_markets: list[str] | None = None,
         min_confidence: int = 60,
         bankroll: float = 1000.0,
+        upcoming_fixture_ids: set[int] | None = None,
     ) -> dict:
         """
         Assemble the optimal ticket given user constraints.
@@ -52,6 +53,10 @@ class TicketBuilder:
         """
         # Get candidates
         candidates = await self.engine.get_value_bets_for_date(target_date)
+
+        # Filter to upcoming fixtures only (when provided by chat layer)
+        if upcoming_fixture_ids is not None:
+            candidates = [c for c in candidates if c["fixture_id"] in upcoming_fixture_ids]
 
         if preferred_markets:
             candidates = [c for c in candidates if c["market"] in preferred_markets]
@@ -150,6 +155,7 @@ class TicketBuilder:
         fixture_id_to_remove: int,
         target_date: date,
         preference: str = "safer",
+        upcoming_fixture_ids: set[int] | None = None,
     ) -> dict:
         """Swap a game in an existing ticket."""
         async with self.session_factory() as session:
@@ -171,6 +177,11 @@ class TicketBuilder:
 
             # Get replacement candidates
             value_bets = await self.engine.get_value_bets_for_date(target_date)
+
+            # Filter to upcoming fixtures only (when provided by chat layer)
+            if upcoming_fixture_ids is not None:
+                value_bets = [v for v in value_bets if v["fixture_id"] in upcoming_fixture_ids]
+
             existing_fixtures = {g["fixture_id"] for g in remaining}
             replacements = [
                 v for v in value_bets
