@@ -7,3 +7,6 @@ venv
 tests
 scripts
 alembic/versions
+.git
+*.md
+.vscode

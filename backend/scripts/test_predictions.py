@@ -20,8 +20,9 @@ env_path = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
 load_dotenv(env_path)
 
 # Override DATABASE_URL for local execution (localhost, not Docker 'db')
-os.environ["DATABASE_URL"] = (
-    "postgresql+asyncpg://betwise:BetWise2026Secure@localhost:5432/betwise"
+os.environ.setdefault(
+    "DATABASE_URL",
+    "postgresql+asyncpg://betwise:changeme@localhost:5432/betwise",
 )
 
 from sqlalchemy import func, select

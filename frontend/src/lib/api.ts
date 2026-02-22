@@ -73,7 +73,7 @@ export async function getDashboard() {
       active_leagues: number;
       total_fixtures_in_db: number;
     };
-  }>("/api/admin/dashboard");
+  }>("/api/admin/dashboard", { auth: true });
 }
 
 export async function getDataHealth() {
@@ -84,7 +84,7 @@ export async function getDataHealth() {
       teams_with_form_data: number;
       latest_fixture_date: string | null;
     };
-  }>("/api/admin/data-health");
+  }>("/api/admin/data-health", { auth: true });
 }
 
 export async function getAccuracy() {
@@ -101,7 +101,7 @@ export async function getAccuracy() {
       profit_loss: number;
       roi_pct: number;
     }>;
-  }>("/api/admin/accuracy");
+  }>("/api/admin/accuracy", { auth: true });
 }
 
 export async function getMarketAccuracy(market: string) {
@@ -115,7 +115,7 @@ export async function getMarketAccuracy(market: string) {
       avg_edge: number;
       roi_pct: number;
     }>;
-  }>(`/api/admin/accuracy/${market}`);
+  }>(`/api/admin/accuracy/${market}`, { auth: true });
 }
 
 export async function updateSettings(settings: {
@@ -130,6 +130,7 @@ export async function updateSettings(settings: {
     {
       method: "PUT",
       body: JSON.stringify(settings),
+      auth: true,
     }
   );
 }

@@ -1,11 +1,15 @@
+import hmac
 from datetime import date, datetime, timedelta, timezone
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Header
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import get_current_admin
 from app.config import settings
 from app.database import get_db
 from app.models.fixture import Fixture
@@ -15,32 +19,33 @@ from app.models.prediction import Prediction
 from app.models.team_last20 import TeamLast20
 
 router = APIRouter()
+limiter = Limiter(key_func=get_remote_address)
 
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(..., min_length=1, max_length=100)
+    password: str = Field(..., min_length=1, max_length=200)
 
 
 class SettingsUpdate(BaseModel):
-    kelly_multiplier: float | None = None
-    min_confidence: int | None = None
-    min_edge: float | None = None
-    odds_min: float | None = None
-    odds_max: float | None = None
+    kelly_multiplier: float | None = Field(None, ge=0.01, le=1.0)
+    min_confidence: int | None = Field(None, ge=0, le=100)
+    min_edge: float | None = Field(None, ge=0.0, le=1.0)
+    odds_min: float | None = Field(None, ge=1.0, le=50.0)
+    odds_max: float | None = Field(None, ge=1.0, le=50.0)
 
 
 @router.post("/login")
-async def admin_login(request: LoginRequest):
+@limiter.limit("5/minute")
+async def admin_login(request_body: LoginRequest, request: Request):
     """Admin login — returns JWT."""
-    if (
-        request.username != settings.ADMIN_USERNAME
-        or request.password != settings.ADMIN_PASSWORD
-    ):
+    user_ok = hmac.compare_digest(request_body.username, settings.ADMIN_USERNAME)
+    pass_ok = hmac.compare_digest(request_body.password, settings.ADMIN_PASSWORD)
+    if not (user_ok and pass_ok):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     payload = {
-        "sub": request.username,
+        "sub": request_body.username,
         "exp": datetime.now(timezone.utc) + timedelta(hours=settings.JWT_EXPIRY_HOURS),
     }
     token = jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
@@ -48,7 +53,10 @@ async def admin_login(request: LoginRequest):
 
 
 @router.get("/dashboard")
-async def get_dashboard(db: AsyncSession = Depends(get_db)):
+async def get_dashboard(
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
+):
     """Today's overview dashboard."""
     today = date.today()
 
@@ -91,7 +99,7 @@ async def get_dashboard(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/data-health")
-async def get_data_health(db: AsyncSession = Depends(get_db)):
+async def get_data_health(db: AsyncSession = Depends(get_db), _admin: dict = Depends(get_current_admin)):
     """Sync status and data completeness."""
     status_result = await db.execute(
         select(Fixture.status, func.count(Fixture.id)).group_by(Fixture.status)
@@ -122,7 +130,7 @@ async def get_data_health(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/accuracy")
-async def get_accuracy(db: AsyncSession = Depends(get_db)):
+async def get_accuracy(db: AsyncSession = Depends(get_db), _admin: dict = Depends(get_current_admin)):
     """Model accuracy over time (last 30 days) with summary stats."""
     today = date.today()
     cutoff_30 = today - timedelta(days=30)
@@ -187,7 +195,7 @@ async def get_accuracy(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/accuracy/{market}")
-async def get_market_accuracy(market: str, db: AsyncSession = Depends(get_db)):
+async def get_market_accuracy(market: str, db: AsyncSession = Depends(get_db), _admin: dict = Depends(get_current_admin)):
     """Market-specific accuracy."""
     result = await db.execute(
         select(ModelAccuracy)
@@ -212,19 +220,21 @@ async def get_market_accuracy(market: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/backfill")
-async def trigger_backfill(league_id: int, season: int):
+@limiter.limit("2/hour")
+async def trigger_backfill(league_id: int, season: int, request: Request, _admin: dict = Depends(get_current_admin)):
     """Trigger historical backfill (placeholder — needs Celery)."""
     return {"status": "queued", "league_id": league_id, "season": season}
 
 
 @router.post("/retrain")
-async def trigger_retrain():
+@limiter.limit("1/hour")
+async def trigger_retrain(request: Request, _admin: dict = Depends(get_current_admin)):
     """Trigger ML retrain (placeholder — needs Celery)."""
     return {"status": "queued", "message": "ML retrain task queued"}
 
 
 @router.put("/settings")
-async def update_settings(request: SettingsUpdate):
+async def update_settings(request: SettingsUpdate, _admin: dict = Depends(get_current_admin)):
     """Update model weights and thresholds (runtime only)."""
     updated = {}
     if request.kelly_multiplier is not None:
@@ -247,7 +257,7 @@ async def update_settings(request: SettingsUpdate):
 
 
 @router.get("/leagues")
-async def list_leagues(db: AsyncSession = Depends(get_db)):
+async def list_leagues(db: AsyncSession = Depends(get_db), _admin: dict = Depends(get_current_admin)):
     """List leagues with status."""
     result = await db.execute(select(League).order_by(League.country, League.name))
     leagues = result.scalars().all()
@@ -272,7 +282,7 @@ async def list_leagues(db: AsyncSession = Depends(get_db)):
 
 
 @router.put("/leagues/{league_id}")
-async def update_league(league_id: int, is_active: bool, db: AsyncSession = Depends(get_db)):
+async def update_league(league_id: int, is_active: bool, db: AsyncSession = Depends(get_db), _admin: dict = Depends(get_current_admin)):
     """Enable/disable league."""
     league = await db.get(League, league_id)
     if not league:

@@ -2,6 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:2323";
 
+const ALLOWED_RESPONSE_HEADERS = new Set([
+  "content-type",
+  "content-length",
+  "cache-control",
+  "x-content-type-options",
+  "x-frame-options",
+  "referrer-policy",
+]);
+
 async function proxy(
   req: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
@@ -21,9 +30,16 @@ async function proxy(
         : undefined,
   });
 
+  const filteredHeaders = new Headers();
+  res.headers.forEach((value, key) => {
+    if (ALLOWED_RESPONSE_HEADERS.has(key.toLowerCase())) {
+      filteredHeaders.set(key, value);
+    }
+  });
+
   return new NextResponse(res.body, {
     status: res.status,
-    headers: res.headers,
+    headers: filteredHeaders,
   });
 }
 

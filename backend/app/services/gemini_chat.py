@@ -1,17 +1,22 @@
 """Gemini chat service with structured function calling — Phase 7.
 
-Uses Google Gemini 2.5 Flash with 4 tool functions that route to
+Uses Google Gemini 2.5 Flash with 5 tool functions that route to
 the backend prediction engine and ticket builder for real data.
 """
 
 import json
 import logging
-from datetime import date
+from datetime import date, timedelta
 
 import google.generativeai as genai
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.orm import aliased
 
 from app.config import settings
+from app.models.fixture import Fixture
+from app.models.league import League
+from app.models.team import Team
 from app.services.live_fixtures import get_upcoming_fixture_ids
 from app.services.prediction_engine import PredictionEngine
 from app.services.ticket_builder import TicketBuilder
@@ -32,13 +37,17 @@ IMPORTANT RULES:
 - If anything is ambiguous, ask for clarification.
 - Star ratings: ★★★ = confidence 80+, ★★☆ = 65-79, ★☆☆ = 50-64
 - When showing predictions, format them as a clear table or list with match, market, selection, odds, edge, and confidence.
-- All predictions are automatically filtered to only show upcoming (not started) fixtures. If no games are available, suggest the user check back later or ask about tomorrow's fixtures.
+- When a user mentions a team name without a fixture ID, use the search_fixtures function to find matching fixtures first, then use analyze_fixture with the fixture ID found.
+- If search_fixtures returns multiple matches, present them and ask which one the user wants analyzed.
+- By default, get_predictions only returns upcoming (not started) fixtures. If the user asks about a live or finished game, use include_all_statuses=true.
+- For finished games, clearly note that predictions are retrospective — what the model would have bet before kickoff.
+- For live games, note that predictions are pre-match and don't account for in-game events.
 - Today's date is {today}.
 """.strip()
 
 
 def _build_tools() -> list:
-    """Build the 4 function declarations for Gemini tool calling."""
+    """Build the 5 function declarations for Gemini tool calling."""
     return [
         genai.protos.Tool(
             function_declarations=[
@@ -63,6 +72,10 @@ def _build_tools() -> list:
                             "value_only": genai.protos.Schema(
                                 type=genai.protos.Type.BOOLEAN,
                                 description="Only return value bets (edge > 2%, confidence >= 60)",
+                            ),
+                            "include_all_statuses": genai.protos.Schema(
+                                type=genai.protos.Type.BOOLEAN,
+                                description="If true, include predictions for live and finished fixtures too (not just upcoming). Default false.",
                             ),
                         },
                         required=["date"],
@@ -135,6 +148,33 @@ def _build_tools() -> list:
                         required=["ticket_id", "fixture_id_to_remove"],
                     ),
                 ),
+                genai.protos.FunctionDeclaration(
+                    name="search_fixtures",
+                    description=(
+                        "Search for fixtures by team name. Returns matching fixtures "
+                        "from recent and upcoming days with fixture IDs, team names, "
+                        "status, kickoff time, and league. Use this when the user "
+                        "mentions a team name and you need to find the fixture ID."
+                    ),
+                    parameters=genai.protos.Schema(
+                        type=genai.protos.Type.OBJECT,
+                        properties={
+                            "team_name": genai.protos.Schema(
+                                type=genai.protos.Type.STRING,
+                                description="Team name or partial name to search for (e.g. 'Roma', 'Man United', 'Barcelona')",
+                            ),
+                            "date": genai.protos.Schema(
+                                type=genai.protos.Type.STRING,
+                                description="Optional center date in YYYY-MM-DD format. Defaults to today. Searches +/- 3 days around this date.",
+                            ),
+                            "status": genai.protos.Schema(
+                                type=genai.protos.Type.STRING,
+                                description="Optional status filter: 'upcoming' (not started), 'live', 'finished', or 'all'. Defaults to 'all'.",
+                            ),
+                        },
+                        required=["team_name"],
+                    ),
+                ),
             ]
         ),
     ]
@@ -204,6 +244,7 @@ class GeminiChatService:
         "build_ticket": "ticket",
         "analyze_fixture": "analysis",
         "swap_ticket_game": "ticket",
+        "search_fixtures": "fixtures",
     }
 
     async def _send_with_function_loop(
@@ -230,8 +271,8 @@ class GeminiChatService:
             try:
                 result = await self._execute_function(fn_name, fn_args)
             except Exception as e:
-                logger.error("Function %s failed: %s", fn_name, e)
-                result = {"error": str(e)}
+                logger.error("Function %s failed: %s", fn_name, e, exc_info=True)
+                result = {"error": "Function call failed. Please try again."}
 
             # Capture structured data from the last successful function call
             if "error" not in result:
@@ -290,32 +331,150 @@ class GeminiChatService:
             except Exception:
                 return "I couldn't generate a response. Please try again."
 
+    _VALID_MARKETS = {"1x2", "ou25", "btts", "dc", "htft"}
+    _VALID_PREFERENCES = {"safer", "riskier"}
+
+    _TEAM_ALIASES: dict[str, str] = {
+        "man united": "Manchester United",
+        "man utd": "Manchester United",
+        "man city": "Manchester City",
+        "barca": "Barcelona",
+        "juve": "Juventus",
+        "atletico": "Atletico Madrid",
+        "atleti": "Atletico Madrid",
+        "spurs": "Tottenham",
+        "inter": "Inter Milan",
+        "psg": "Paris Saint Germain",
+        "bayern": "Bayern Munich",
+        "dortmund": "Borussia Dortmund",
+        "real": "Real Madrid",
+        "ac milan": "AC Milan",
+        "napoli": "SSC Napoli",
+        "roma": "AS Roma",
+        "lazio": "SS Lazio",
+    }
+
+    _STATUS_GROUPS: dict[str, list[str]] = {
+        "upcoming": ["NS", "TBD"],
+        "live": ["1H", "2H", "HT", "ET", "BT", "P", "SUSP", "INT"],
+        "finished": ["FT", "AET", "PEN"],
+    }
+
+    def _safe_parse_date(self, raw: str) -> date:
+        """Parse a date string, raising ValueError with a safe message."""
+        try:
+            return date.fromisoformat(raw[:10])
+        except (ValueError, TypeError):
+            raise ValueError("Invalid date format — expected YYYY-MM-DD")
+
+    async def _search_fixtures_by_team(
+        self,
+        team_query: str,
+        center_date: date,
+        status_filter: str = "all",
+    ) -> dict:
+        """Search fixtures by team name with ILIKE matching and alias resolution."""
+        resolved = self._TEAM_ALIASES.get(team_query.lower().strip(), team_query)
+        pattern = f"%{resolved}%"
+
+        start_date = center_date - timedelta(days=3)
+        end_date = center_date + timedelta(days=3)
+
+        HomeTeam = aliased(Team)
+        AwayTeam = aliased(Team)
+
+        async with self.session_factory() as session:
+            q = (
+                select(
+                    Fixture.id,
+                    Fixture.date,
+                    Fixture.kickoff_time,
+                    Fixture.status,
+                    Fixture.score_home_ft,
+                    Fixture.score_away_ft,
+                    Fixture.score_home_ht,
+                    Fixture.score_away_ht,
+                    HomeTeam.name.label("home_team"),
+                    AwayTeam.name.label("away_team"),
+                    League.name.label("league_name"),
+                )
+                .join(HomeTeam, Fixture.home_team_id == HomeTeam.id)
+                .join(AwayTeam, Fixture.away_team_id == AwayTeam.id)
+                .join(League, Fixture.league_id == League.id)
+                .where(
+                    Fixture.date.between(start_date, end_date),
+                    or_(
+                        HomeTeam.name.ilike(pattern),
+                        AwayTeam.name.ilike(pattern),
+                    ),
+                )
+            )
+
+            if status_filter in self._STATUS_GROUPS:
+                q = q.where(Fixture.status.in_(self._STATUS_GROUPS[status_filter]))
+
+            q = q.order_by(Fixture.kickoff_time.desc()).limit(10)
+
+            result = await session.execute(q)
+            rows = result.all()
+
+        if not rows:
+            return {
+                "fixtures": [],
+                "count": 0,
+                "message": f"No fixtures found for '{team_query}' between {start_date} and {end_date}. Try a different date or team name.",
+            }
+
+        fixtures = []
+        for row in rows:
+            score = None
+            if row.score_home_ft is not None and row.score_away_ft is not None:
+                score = f"{row.score_home_ft}-{row.score_away_ft}"
+            elif row.score_home_ht is not None and row.score_away_ht is not None:
+                score = f"{row.score_home_ht}-{row.score_away_ht} (HT)"
+
+            fixtures.append({
+                "fixture_id": row.id,
+                "home_team": row.home_team,
+                "away_team": row.away_team,
+                "league": row.league_name,
+                "date": str(row.date),
+                "kickoff": str(row.kickoff_time),
+                "status": row.status,
+                "score": score,
+            })
+
+        return {"fixtures": fixtures, "count": len(fixtures)}
+
     async def _execute_function(self, name: str, args: dict) -> dict | list:
         """Route a function call to the appropriate backend service."""
         engine = self._get_engine()
         builder = self._get_builder()
 
         if name == "get_predictions":
-            target_date = date.fromisoformat(args["date"])
-            value_only = args.get("value_only", False)
+            target_date = self._safe_parse_date(args.get("date", ""))
+            value_only = bool(args.get("value_only", False))
 
             if value_only:
                 preds = await engine.get_value_bets_for_date(target_date)
             else:
                 preds = await engine.get_predictions_for_date(target_date)
 
-            # Filter to upcoming (NS) fixtures only — live check via API-Football
-            upcoming_ids = await get_upcoming_fixture_ids(target_date, self.session_factory)
-            preds = [p for p in preds if p["fixture_id"] in upcoming_ids]
+            # Filter to upcoming (NS) fixtures unless include_all_statuses is set
+            include_all = bool(args.get("include_all_statuses", False))
+            if not include_all:
+                upcoming_ids = await get_upcoming_fixture_ids(target_date, self.session_factory)
+                preds = [p for p in preds if p["fixture_id"] in upcoming_ids]
 
             # Apply optional filters
             market_filter = args.get("market")
-            if market_filter:
+            if market_filter and market_filter in self._VALID_MARKETS:
                 preds = [p for p in preds if p["market"] == market_filter]
 
             min_conf = args.get("min_confidence")
             if min_conf is not None:
-                preds = [p for p in preds if p["confidence_score"] >= int(min_conf)]
+                min_conf = max(0, min(100, int(min_conf)))
+                preds = [p for p in preds if p["confidence_score"] >= min_conf]
 
             if not preds:
                 return {
@@ -327,13 +486,15 @@ class GeminiChatService:
             return {"predictions": preds, "count": len(preds)}
 
         elif name == "build_ticket":
-            target_date = date.fromisoformat(args["date"])
-            num_games = int(args["num_games"])
+            target_date = self._safe_parse_date(args.get("date", ""))
+            num_games = max(1, min(15, int(args.get("num_games", 3))))
             target_odds = args.get("target_odds")
             if target_odds is not None:
-                target_odds = float(target_odds)
+                target_odds = max(1.0, min(10000.0, float(target_odds)))
             preferred_markets = args.get("preferred_markets")
-            min_confidence = int(args.get("min_confidence", 60))
+            if preferred_markets:
+                preferred_markets = [m for m in preferred_markets if m in self._VALID_MARKETS]
+            min_confidence = max(0, min(100, int(args.get("min_confidence", 60))))
 
             # Get upcoming fixture IDs for filtering
             upcoming_ids = await get_upcoming_fixture_ids(target_date, self.session_factory)
@@ -348,23 +509,30 @@ class GeminiChatService:
             )
 
         elif name == "analyze_fixture":
-            fixture_id = int(args["fixture_id"])
+            fixture_id = max(1, int(args.get("fixture_id", 0)))
             analysis = await engine.analyze_fixture(fixture_id)
 
-            # Warn if fixture is no longer upcoming
-            upcoming_ids = await get_upcoming_fixture_ids(date.today(), self.session_factory)
-            if fixture_id not in upcoming_ids and "error" not in analysis:
-                analysis["warning"] = (
-                    "This fixture has already started or finished. "
-                    "Predictions are for reference only — not bettable."
-                )
+            if "error" not in analysis:
+                status = analysis.get("status", "")
+                if status in ("FT", "AET", "PEN"):
+                    analysis["status_note"] = (
+                        "This fixture has finished. Predictions shown are what the model "
+                        "would have recommended before kickoff — useful for review and backtesting."
+                    )
+                elif status in ("1H", "2H", "HT", "ET", "BT", "P"):
+                    analysis["status_note"] = (
+                        "This fixture is currently live. Predictions are pre-match only "
+                        "and do not account for in-game events."
+                    )
 
             return analysis
 
         elif name == "swap_ticket_game":
-            ticket_id = str(args["ticket_id"])
-            fixture_id_to_remove = int(args["fixture_id_to_remove"])
+            ticket_id = str(args.get("ticket_id", ""))
+            fixture_id_to_remove = max(1, int(args.get("fixture_id_to_remove", 0)))
             preference = args.get("preference", "safer")
+            if preference not in self._VALID_PREFERENCES:
+                preference = "safer"
 
             target_date = date.today()
             upcoming_ids = await get_upcoming_fixture_ids(target_date, self.session_factory)
@@ -377,8 +545,25 @@ class GeminiChatService:
                 upcoming_fixture_ids=upcoming_ids,
             )
 
+        elif name == "search_fixtures":
+            team_query = str(args.get("team_name", "")).strip()
+            if not team_query:
+                return {"error": "team_name is required"}
+
+            raw_date = args.get("date")
+            if raw_date:
+                center_date = self._safe_parse_date(raw_date)
+            else:
+                center_date = date.today()
+
+            status_filter = str(args.get("status", "all")).lower()
+
+            return await self._search_fixtures_by_team(
+                team_query, center_date, status_filter
+            )
+
         else:
-            return {"error": f"Unknown function: {name}"}
+            return {"error": "Unknown function"}
 
     @staticmethod
     def _make_serializable(obj) -> dict | list | str:

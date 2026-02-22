@@ -27,9 +27,10 @@ optuna==4.1.0
 # AI Chat
 google-generativeai==0.8.4
 
-# Auth
+# Auth & Security
 pyjwt==2.10.1
 passlib[bcrypt]==1.7.4
+slowapi==0.1.9
 
 # Config
 pydantic-settings==2.7.1

@@ -18,8 +18,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
-os.environ["DATABASE_URL"] = (
-    "postgresql+asyncpg://betwise:BetWise2026Secure@localhost:5432/betwise"
+os.environ.setdefault(
+    "DATABASE_URL",
+    "postgresql+asyncpg://betwise:changeme@localhost:5432/betwise",
 )
 
 import logging

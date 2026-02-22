@@ -2,10 +2,11 @@ import uuid
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import get_current_admin
 from app.database import async_session, get_db
 from app.models.fixture import Fixture
 from app.models.ticket import Ticket
@@ -14,19 +15,21 @@ from app.services.ticket_builder import TicketBuilder
 
 router = APIRouter()
 
+VALID_MARKETS = {"1x2", "ou25", "btts", "dc", "htft"}
+
 
 class TicketBuildRequest(BaseModel):
     date: str
-    num_games: int
-    target_odds: float | None = None
+    num_games: int = Field(..., ge=1, le=15)
+    target_odds: float | None = Field(None, ge=1.0, le=10000.0)
     preferred_markets: list[str] | None = None
-    min_confidence: int = 60
-    bankroll: float = 1000.0
+    min_confidence: int = Field(60, ge=0, le=100)
+    bankroll: float = Field(1000.0, ge=1.0, le=1_000_000.0)
 
 
 class TicketSwapRequest(BaseModel):
-    fixture_id_to_remove: int
-    preference: str = "safer"
+    fixture_id_to_remove: int = Field(..., ge=1)
+    preference: str = Field("safer", pattern="^(safer|riskier)$")
 
 
 def _get_builder() -> TicketBuilder:
@@ -36,7 +39,7 @@ def _get_builder() -> TicketBuilder:
 
 
 @router.post("/build")
-async def build_ticket(request: TicketBuildRequest, db: AsyncSession = Depends(get_db)):
+async def build_ticket(request: TicketBuildRequest, db: AsyncSession = Depends(get_db), _admin: dict = Depends(get_current_admin)):
     """Build an optimized ticket."""
     try:
         target = date.fromisoformat(request.date)
@@ -54,7 +57,7 @@ async def build_ticket(request: TicketBuildRequest, db: AsyncSession = Depends(g
     )
 
     if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
+        raise HTTPException(status_code=400, detail="Could not build ticket with given parameters")
 
     return {"ticket": result}
 
@@ -64,6 +67,7 @@ async def swap_game(
     ticket_id: str,
     request: TicketSwapRequest,
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
 ):
     """Swap a game in a ticket."""
     builder = _get_builder()
@@ -91,13 +95,13 @@ async def swap_game(
     )
 
     if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
+        raise HTTPException(status_code=400, detail="Swap failed")
 
     return {"ticket": result}
 
 
 @router.get("/")
-async def list_tickets(db: AsyncSession = Depends(get_db)):
+async def list_tickets(db: AsyncSession = Depends(get_db), _admin: dict = Depends(get_current_admin)):
     """List all tickets, most recent first."""
     result = await db.execute(
         select(Ticket).order_by(Ticket.created_at.desc()).limit(50)
@@ -121,7 +125,7 @@ async def list_tickets(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{ticket_id}")
-async def get_ticket(ticket_id: str, db: AsyncSession = Depends(get_db)):
+async def get_ticket(ticket_id: str, db: AsyncSession = Depends(get_db), _admin: dict = Depends(get_current_admin)):
     """Get ticket details."""
     try:
         tid = uuid.UUID(ticket_id)

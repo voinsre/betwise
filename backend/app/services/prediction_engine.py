@@ -286,6 +286,7 @@ class PredictionEngine:
                     "home_team": home_team.name,
                     "away_team": away_teams.get(fixture.id, "Unknown"),
                     "kickoff": str(fixture.kickoff_time),
+                    "status": fixture.status,
                     "league_id": fixture.league_id,
                     "market": pred.market,
                     "selection": pred.selection,

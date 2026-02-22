@@ -14,9 +14,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import os
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+
 os.environ.setdefault(
     "DATABASE_URL",
-    "postgresql+asyncpg://betwise:BetWise2026Secure@localhost:5432/betwise",
+    "postgresql+asyncpg://betwise:changeme@localhost:5432/betwise",
 )
 
 from sqlalchemy import func, select

@@ -1,6 +1,10 @@
+import logging
+import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
 
 # Find .env at project root (one level above backend/)
 _ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
@@ -43,3 +47,18 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Startup validation — warn on insecure defaults in production
+_is_production = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("ENVIRONMENT") == "production")
+if _is_production:
+    _warnings = []
+    if settings.JWT_SECRET == "changeme":
+        _warnings.append("JWT_SECRET is still 'changeme' — set a strong random secret")
+    if settings.ADMIN_PASSWORD == "changeme":
+        _warnings.append("ADMIN_PASSWORD is still 'changeme' — set a strong password")
+    if settings.DB_PASSWORD == "changeme":
+        _warnings.append("DB_PASSWORD is still 'changeme' — set a strong password")
+    if not settings.API_FOOTBALL_KEY:
+        _warnings.append("API_FOOTBALL_KEY is empty — data sync will not work")
+    for w in _warnings:
+        logger.warning("CONFIG WARNING: %s", w)

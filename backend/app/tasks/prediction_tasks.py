@@ -56,7 +56,7 @@ async def _run_all_predictions():
                 total_preds += len(preds)
                 total_value += sum(1 for p in preds if p.is_value_bet)
             except Exception as e:
-                logger.error("Prediction failed for fixture %d: %s", fx.id, e)
+                logger.error("Prediction failed for fixture %d: %s", fx.id, e, exc_info=True)
                 errors += 1
 
         logger.info(
