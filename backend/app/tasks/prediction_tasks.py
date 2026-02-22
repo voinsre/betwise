@@ -1,7 +1,7 @@
-"""Prediction Celery tasks — Phase 10.
+"""Prediction Celery tasks — Phase 10 + Phase 12 retrain.
 
-Runs the prediction engine for all today's fixtures and stubs
-the weekly ML retrain task.
+Runs the prediction engine for all today's fixtures and
+weekly ML model retrain with rolling data window.
 """
 
 import asyncio
@@ -67,7 +67,37 @@ async def _run_all_predictions():
         await engine.dispose()
 
 
-@celery_app.task
+@celery_app.task(time_limit=1800, soft_time_limit=1500)
 def retrain_ml_model():
-    """Weekly ML model retrain (stub — full implementation in future phase)."""
-    logger.info("retrain_ml_model: weekly retrain triggered (stub — not yet fully implemented)")
+    """Weekly ML model retrain using rolling data window."""
+    asyncio.run(_retrain_ml_model())
+
+
+async def _retrain_ml_model():
+    engine = create_async_engine(settings.DATABASE_URL, echo=False)
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    try:
+        from app.services.retrain import retrain_all_models
+
+        results = await retrain_all_models(session_factory)
+
+        if "error" in results:
+            logger.warning("Retrain skipped: %s", results["error"])
+        else:
+            for market, metrics in results.items():
+                if "error" in metrics:
+                    logger.warning("Market %s failed: %s", market, metrics["error"])
+                else:
+                    logger.info(
+                        "Market %s: accuracy=%.2f%%, log_loss=%.4f, samples=%d/%d",
+                        market,
+                        metrics["accuracy"] * 100,
+                        metrics["log_loss"],
+                        metrics["train_samples"],
+                        metrics["val_samples"],
+                    )
+    except Exception as e:
+        logger.error("Retrain failed: %s", e, exc_info=True)
+    finally:
+        await engine.dispose()
