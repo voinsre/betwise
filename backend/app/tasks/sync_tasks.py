@@ -157,6 +157,21 @@ async def _sync_all_odds():
         logger.info("Odds sync complete: %d odds rows for %d fixtures", total_odds, len(fixtures))
 
 
+# ── refresh_odds_and_predict ──────────────────────────────────────
+
+@celery_app.task
+def refresh_odds_and_predict():
+    """Refresh odds for today's NS fixtures, then re-run predictions."""
+    asyncio.run(_refresh_odds_and_predict())
+
+
+async def _refresh_odds_and_predict():
+    from app.tasks.prediction_tasks import _run_all_predictions
+
+    await _sync_all_odds()
+    await _run_all_predictions()
+
+
 # ── backfill_historical ──────────────────────────────────────────
 
 @celery_app.task
