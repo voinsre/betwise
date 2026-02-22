@@ -1,6 +1,6 @@
 """Gemini chat service with structured function calling — Phase 7.
 
-Uses Google Gemini 2.5 Pro with 4 tool functions that route to
+Uses Google Gemini 2.5 Flash with 4 tool functions that route to
 the backend prediction engine and ticket builder for real data.
 """
 
@@ -150,7 +150,7 @@ class GeminiChatService:
 
         genai.configure(api_key=settings.GEMINI_API_KEY)
         self.model = genai.GenerativeModel(
-            model_name="gemini-2.5-pro",
+            model_name="gemini-2.5-flash",
             system_instruction=SYSTEM_PROMPT.format(today=date.today()),
             tools=_build_tools(),
         )
