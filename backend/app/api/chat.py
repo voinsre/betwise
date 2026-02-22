@@ -6,7 +6,6 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import get_current_admin
 from app.config import settings
 from app.database import async_session, get_db
 
@@ -27,7 +26,6 @@ async def chat(
     request_body: ChatRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    _admin: dict = Depends(get_current_admin),
 ):
     """Send message to Gemini chat with function calling."""
     if not settings.GEMINI_API_KEY:

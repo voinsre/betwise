@@ -36,7 +36,7 @@ export function useChat() {
           message: content,
           history,
         }),
-        auth: true,
+        auth: false,
       });
 
       const assistantMessage: ChatMessage = {
