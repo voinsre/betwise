@@ -1,5 +1,7 @@
-// Use relative paths — Next.js rewrites proxy /api/* to the backend
-const API_URL = "";
+// In production (Railway): NEXT_PUBLIC_API_URL is the backend's public URL
+// e.g. https://betwise-production.up.railway.app — fetch calls go directly.
+// In local dev: not set, so we use relative paths through Next.js rewrites.
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
