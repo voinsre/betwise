@@ -20,7 +20,6 @@ node_modules/
 out/
 
 # ML artifacts
-ml/models/*.json
 ml/models/*.pkl
 ml/models/*.joblib
 
