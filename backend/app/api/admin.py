@@ -1,22 +1,29 @@
+import asyncio
 import hmac
+import logging
 from datetime import date, datetime, timedelta, timezone
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.auth import get_current_admin
 from app.config import settings
-from app.database import get_db
+from app.database import async_session, get_db
 from app.models.fixture import Fixture
 from app.models.league import League
 from app.models.model_accuracy import ModelAccuracy
 from app.models.prediction import Prediction
 from app.models.team_last20 import TeamLast20
+from app.services.api_football import APIFootballClient
+from app.services.data_sync import DataSyncService
+from app.services.prediction_engine import PredictionEngine
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
@@ -231,6 +238,98 @@ async def trigger_backfill(league_id: int, season: int, request: Request, _admin
 async def trigger_retrain(request: Request, _admin: dict = Depends(get_current_admin)):
     """Trigger ML retrain (placeholder — needs Celery)."""
     return {"status": "queued", "message": "ML retrain task queued"}
+
+
+async def _run_pipeline():
+    """Full pipeline: sync fixtures → sync data → sync odds → run predictions."""
+    engine = create_async_engine(settings.DATABASE_URL, echo=False)
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    client = APIFootballClient(api_key=settings.API_FOOTBALL_KEY)
+
+    try:
+        sync = DataSyncService(session_factory, client)
+        today = date.today()
+        tomorrow = today + timedelta(days=1)
+
+        # Step 1: Sync fixtures
+        logger.info("Pipeline: syncing fixtures for %s and %s", today, tomorrow)
+        await sync.sync_fixtures_for_date(today.isoformat())
+        await sync.sync_fixtures_for_date(tomorrow.isoformat())
+
+        # Step 2: Sync fixture data
+        async with session_factory() as session:
+            result = await session.execute(
+                select(Fixture).where(Fixture.date == today)
+            )
+            fixtures = result.scalars().all()
+
+        logger.info("Pipeline: syncing data for %d fixtures", len(fixtures))
+        for fx in fixtures:
+            try:
+                await sync.sync_team_last20(fx.home_team_id, fx.league_id, fx.season)
+                await sync.sync_team_last20(fx.away_team_id, fx.league_id, fx.season)
+                await sync.sync_head_to_head(fx.home_team_id, fx.away_team_id)
+                await sync.sync_injuries(fx.id)
+                await sync.sync_standings(fx.league_id, fx.season)
+            except Exception as e:
+                logger.error("Pipeline: fixture %d data sync failed: %s", fx.id, e)
+
+        # Step 3: Sync odds
+        async with session_factory() as session:
+            result = await session.execute(
+                select(Fixture).where(Fixture.date == today, Fixture.status == "NS")
+            )
+            ns_fixtures = result.scalars().all()
+
+        logger.info("Pipeline: syncing odds for %d NS fixtures", len(ns_fixtures))
+        for fx in ns_fixtures:
+            try:
+                await sync.sync_odds(fx.id)
+            except Exception as e:
+                logger.error("Pipeline: odds sync failed for fixture %d: %s", fx.id, e)
+
+        # Step 4: Run predictions
+        logger.info("Pipeline: running predictions")
+        pred_engine = PredictionEngine(session_factory)
+        pred_engine.load_models()
+
+        async with session_factory() as session:
+            result = await session.execute(
+                select(Fixture).where(
+                    Fixture.date == today, Fixture.status.in_(["NS", "TBD"])
+                )
+            )
+            pred_fixtures = list(result.scalars().all())
+
+        total_preds = 0
+        total_value = 0
+        for fx in pred_fixtures:
+            try:
+                preds = await pred_engine.predict_fixture(fx.id)
+                total_preds += len(preds)
+                total_value += sum(1 for p in preds if p.is_value_bet)
+            except Exception as e:
+                logger.error("Pipeline: prediction failed for fixture %d: %s", fx.id, e)
+
+        logger.info(
+            "Pipeline complete: %d predictions, %d value bets across %d fixtures",
+            total_preds, total_value, len(pred_fixtures),
+        )
+    finally:
+        await client.close()
+        await engine.dispose()
+
+
+@router.post("/run-pipeline")
+@limiter.limit("2/hour")
+async def run_pipeline(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    _admin: dict = Depends(get_current_admin),
+):
+    """Trigger full daily pipeline: sync → odds → predictions. Runs in background."""
+    background_tasks.add_task(_run_pipeline)
+    return {"status": "started", "message": "Pipeline running in background — check logs for progress"}
 
 
 @router.put("/settings")
