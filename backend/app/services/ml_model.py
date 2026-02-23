@@ -5,6 +5,7 @@ XGBoost models for 1x2, ou25, btts, and htft markets.
 """
 
 import logging
+import os
 from datetime import date
 from pathlib import Path
 
@@ -21,7 +22,10 @@ from app.models.team_last20 import TeamLast20
 
 logger = logging.getLogger(__name__)
 
-MODEL_DIR = Path(__file__).resolve().parent.parent.parent.parent / "ml" / "models"
+MODEL_DIR = Path(os.environ.get(
+    "MODEL_DIR",
+    str(Path(__file__).resolve().parent.parent.parent.parent / "ml" / "models"),
+))
 
 # Position weights for injury impact
 _POSITION_WEIGHTS = {

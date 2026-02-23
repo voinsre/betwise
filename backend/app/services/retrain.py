@@ -9,6 +9,7 @@ Called by the retrain_ml_model Celery task (Mondays 03:00 UTC).
 
 import json
 import logging
+import os
 import shutil
 import time
 from datetime import date, timedelta
@@ -26,7 +27,10 @@ from app.services.ml_model import FEATURE_NAMES, MLPredictor
 
 logger = logging.getLogger(__name__)
 
-MODEL_DIR = Path(__file__).resolve().parent.parent.parent.parent / "ml" / "models"
+MODEL_DIR = Path(os.environ.get(
+    "MODEL_DIR",
+    str(Path(__file__).resolve().parent.parent.parent.parent / "ml" / "models"),
+))
 
 # Market configs — must match ml/train.py and ml_model.py
 MARKETS = {

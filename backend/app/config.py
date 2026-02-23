@@ -56,8 +56,8 @@ if _is_production:
         _warnings.append("JWT_SECRET is still 'changeme' — set a strong random secret")
     if settings.ADMIN_PASSWORD == "changeme":
         _warnings.append("ADMIN_PASSWORD is still 'changeme' — set a strong password")
-    if settings.DB_PASSWORD == "changeme":
-        _warnings.append("DB_PASSWORD is still 'changeme' — set a strong password")
+    if "changeme" in settings.DATABASE_URL:
+        _warnings.append("DATABASE_URL still contains default password — set via Railway PostgreSQL plugin")
     if not settings.API_FOOTBALL_KEY:
         _warnings.append("API_FOOTBALL_KEY is empty — data sync will not work")
     for w in _warnings:
