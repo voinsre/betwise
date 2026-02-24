@@ -5,15 +5,15 @@ const API_URL = "";
 
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem("betwise_token");
+  return localStorage.getItem("wizerbet_token");
 }
 
 export function setToken(token: string) {
-  localStorage.setItem("betwise_token", token);
+  localStorage.setItem("wizerbet_token", token);
 }
 
 export function clearToken() {
-  localStorage.removeItem("betwise_token");
+  localStorage.removeItem("wizerbet_token");
 }
 
 export function isAuthenticated(): boolean {

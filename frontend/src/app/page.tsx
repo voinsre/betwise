@@ -4,11 +4,13 @@ export default function Home() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center p-8 bg-brand-bg">
       {/* Logo */}
-      <div className="w-16 h-16 bg-accent-green rounded-2xl flex items-center justify-center mb-6">
-        <span className="text-white font-bold text-2xl">BW</span>
+      <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-6 overflow-hidden">
+        <img src="/icon-192.png" alt="WizerBet" className="w-full h-full" />
       </div>
 
-      <h1 className="text-4xl font-bold text-white mb-3">BetWise</h1>
+      <h1 className="text-4xl font-bold text-white mb-3">
+        Wizer<span className="text-accent-green">Bet</span>
+      </h1>
       <p className="text-gray-500 text-lg text-center max-w-lg mb-2">
         AI-powered football betting intelligence
       </p>

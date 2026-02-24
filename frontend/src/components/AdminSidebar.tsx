@@ -24,11 +24,11 @@ export default function AdminSidebar() {
       {/* Logo */}
       <div className="p-6 border-b border-brand-border">
         <Link href="/admin" className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-accent-green rounded-lg flex items-center justify-center">
-            <span className="text-white font-bold text-sm">BW</span>
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden">
+            <img src="/icon-192.png" alt="WizerBet" className="w-full h-full" />
           </div>
           <div>
-            <h1 className="text-lg font-bold text-white">BetWise</h1>
+            <h1 className="text-lg font-bold text-white">Wizer<span className="text-accent-green">Bet</span></h1>
             <p className="text-xs text-gray-500">Admin Dashboard</p>
           </div>
         </Link>

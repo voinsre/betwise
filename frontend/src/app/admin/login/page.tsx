@@ -33,10 +33,10 @@ export default function AdminLoginPage() {
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="text-center mb-8">
-          <div className="w-12 h-12 bg-accent-green rounded-xl flex items-center justify-center mx-auto mb-4">
-            <span className="text-white font-bold text-lg">BW</span>
+          <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-4 overflow-hidden">
+            <img src="/icon-192.png" alt="WizerBet" className="w-full h-full" />
           </div>
-          <h1 className="text-2xl font-bold text-white">BetWise Admin</h1>
+          <h1 className="text-2xl font-bold text-white">Wizer<span className="text-accent-green">Bet</span> Admin</h1>
           <p className="text-gray-500 text-sm mt-1">Sign in to your dashboard</p>
         </div>
 

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 48" fill="none">
+  <rect x="2" y="2" width="44" height="44" rx="10" fill="#0f1117"/>
+  <text x="24" y="30" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-weight="700" font-size="26" fill="#1abc9c">W</text>
+  <rect x="14" y="36" width="20" height="3" rx="1.5" fill="#f0b90b"/>
+  <text x="56" y="33" font-family="Segoe UI, Arial, sans-serif" font-weight="700" font-size="28" fill="#ffffff">Wizer</text>
+  <text x="134" y="33" font-family="Segoe UI, Arial, sans-serif" font-weight="700" font-size="28" fill="#1abc9c">Bet</text>
+</svg>

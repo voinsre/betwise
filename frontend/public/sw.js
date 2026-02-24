@@ -1,4 +1,4 @@
-const CACHE_NAME = "betwise-v1";
+const CACHE_NAME = "wizerbet-v1";
 const STATIC_ASSETS = ["/", "/chat", "/admin"];
 
 self.addEventListener("install", (event) => {

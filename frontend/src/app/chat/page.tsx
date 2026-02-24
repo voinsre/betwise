@@ -10,10 +10,10 @@ export default function ChatPage() {
       <header className="border-b border-brand-border bg-brand-surface/50 px-4 py-3 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-3">
           <Link href="/" className="flex items-center gap-2.5">
-            <div className="w-7 h-7 bg-accent-green rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-xs">BW</span>
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center overflow-hidden">
+              <img src="/icon-192.png" alt="WizerBet" className="w-full h-full" />
             </div>
-            <h1 className="text-lg font-bold text-white">BetWise</h1>
+            <h1 className="text-lg font-bold text-white">Wizer<span className="text-accent-green">Bet</span></h1>
           </Link>
           <span className="text-xs text-gray-600 border-l border-brand-border pl-3 hidden sm:inline">
             AI Betting Intelligence
