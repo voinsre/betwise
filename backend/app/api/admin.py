@@ -22,6 +22,7 @@ from app.models.team_last20 import TeamLast20
 from app.services.api_football import APIFootballClient
 from app.services.data_sync import DataSyncService
 from app.services.prediction_engine import PredictionEngine
+from app.services.settlement import settle_fixtures_for_date
 
 logger = logging.getLogger(__name__)
 
@@ -363,6 +364,41 @@ async def run_pipeline(
     """Trigger full daily pipeline: sync → odds → predictions. Runs in background."""
     background_tasks.add_task(_run_pipeline)
     return {"status": "started", "message": "Pipeline running in background — check logs for progress"}
+
+
+async def _run_settlement(target_date: date):
+    """Run settlement for a specific date."""
+    engine = create_async_engine(settings.DATABASE_URL, echo=False)
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    client = APIFootballClient(api_key=settings.API_FOOTBALL_KEY)
+
+    try:
+        sync = DataSyncService(session_factory, client)
+        summary = await settle_fixtures_for_date(target_date, session_factory, sync)
+        logger.info("Settlement for %s complete: %s", target_date, summary)
+    finally:
+        await client.close()
+        await engine.dispose()
+
+
+@router.post("/settle/{settle_date}")
+@limiter.limit("5/hour")
+async def trigger_settlement(
+    settle_date: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    _admin: dict = Depends(get_current_admin),
+):
+    """Trigger settlement for a specific date. Use for missed/failed settlement runs."""
+    try:
+        target = date.fromisoformat(settle_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+    if target > date.today():
+        raise HTTPException(status_code=400, detail="Cannot settle future dates.")
+
+    background_tasks.add_task(_run_settlement, target)
+    return {"status": "started", "date": settle_date, "message": f"Settlement for {settle_date} running in background"}
 
 
 @router.put("/settings")
