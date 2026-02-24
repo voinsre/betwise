@@ -1,7 +1,16 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { getDashboard, getValueBets, getPredictions } from "@/lib/api";
+
+const ALL_MARKETS = ["1x2", "ou25", "btts", "dc", "htft"] as const;
+const MARKET_LABELS: Record<string, string> = {
+  "1x2": "1X2",
+  ou25: "O/U 2.5",
+  btts: "BTTS",
+  dc: "DC",
+  htft: "HT/FT",
+};
 
 interface DashboardData {
   date: string;
@@ -72,6 +81,10 @@ export default function AdminDashboard() {
   const [expandedFixture, setExpandedFixture] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [viewMode, setViewMode] = useState<"value" | "all">("value");
+  const [selectedMarkets, setSelectedMarkets] = useState<Set<string>>(
+    () => new Set(ALL_MARKETS)
+  );
 
   const fetchData = useCallback(async () => {
     try {
@@ -98,25 +111,54 @@ export default function AdminDashboard() {
     return () => clearInterval(interval);
   }, [fetchData]);
 
-  // Group value bets by fixture, pick best per fixture for main table
-  const fixtureMap = new Map<number, PredictionRow>();
-  for (const vb of valueBets) {
-    const existing = fixtureMap.get(vb.fixture_id);
-    if (!existing || vb.confidence_score > existing.confidence_score) {
-      fixtureMap.set(vb.fixture_id, vb);
-    }
-  }
-  const fixtureRows = Array.from(fixtureMap.values()).sort(
-    (a, b) => b.confidence_score - a.confidence_score
+  const toggleMarket = useCallback((market: string) => {
+    setSelectedMarkets((prev) => {
+      const next = new Set(prev);
+      if (next.has(market)) {
+        if (next.size > 1) next.delete(market);
+      } else {
+        next.add(market);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleAllMarkets = useCallback(() => {
+    setSelectedMarkets((prev) =>
+      prev.size === ALL_MARKETS.length ? new Set([ALL_MARKETS[0]]) : new Set(ALL_MARKETS)
+    );
+  }, []);
+
+  // Source data based on view mode
+  const sourceData = viewMode === "value" ? valueBets : allPredictions;
+
+  // Filter by selected markets
+  const filteredData = useMemo(
+    () => sourceData.filter((p) => selectedMarkets.has(p.market)),
+    [sourceData, selectedMarkets]
   );
 
+  // Group by fixture, pick best per fixture for main table
+  const fixtureRows = useMemo(() => {
+    const fixtureMap = new Map<number, PredictionRow>();
+    for (const p of filteredData) {
+      const existing = fixtureMap.get(p.fixture_id);
+      if (!existing || p.confidence_score > existing.confidence_score) {
+        fixtureMap.set(p.fixture_id, p);
+      }
+    }
+    return Array.from(fixtureMap.values()).sort(
+      (a, b) => b.confidence_score - a.confidence_score
+    );
+  }, [filteredData]);
+
   const avgConfidence =
-    valueBets.length > 0
-      ? Math.round(valueBets.reduce((s, v) => s + v.confidence_score, 0) / valueBets.length)
+    filteredData.length > 0
+      ? Math.round(filteredData.reduce((s, v) => s + v.confidence_score, 0) / filteredData.length)
       : 0;
   const avgEdge =
-    valueBets.length > 0
-      ? valueBets.reduce((s, v) => s + v.edge, 0) / valueBets.length
+    filteredData.length > 0
+      ? filteredData.reduce((s, v) => s + v.edge, 0) / filteredData.length
       : 0;
 
   if (loading) {
@@ -162,8 +204,8 @@ export default function AdminDashboard() {
           icon="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
         />
         <SummaryCard
-          label="Value Bets"
-          value={valueBets.length}
+          label={viewMode === "value" ? "Value Bets" : "Predictions"}
+          value={filteredData.length}
           accent="green"
           icon="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
         />
@@ -186,17 +228,74 @@ export default function AdminDashboard() {
       {/* Fixtures Table */}
       <div className="bg-brand-card border border-brand-border rounded-xl overflow-hidden">
         <div className="px-6 py-4 border-b border-brand-border">
-          <h2 className="text-lg font-semibold text-white">
-            Today&apos;s Value Bets
-          </h2>
-          <p className="text-sm text-gray-500 mt-0.5">
-            {fixtureRows.length} fixtures with value bets &middot; {valueBets.length} total selections
-          </p>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold text-white">
+                Today&apos;s {viewMode === "value" ? "Value Bets" : "Predictions"}
+              </h2>
+              <p className="text-sm text-gray-500 mt-0.5">
+                {fixtureRows.length} fixtures &middot; {filteredData.length} selections
+              </p>
+            </div>
+
+            {/* View Mode Toggle */}
+            <div className="flex items-center gap-1 bg-brand-surface rounded-lg p-1">
+              <button
+                onClick={() => setViewMode("value")}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  viewMode === "value"
+                    ? "bg-accent-green/20 text-accent-green"
+                    : "text-gray-400 hover:text-white"
+                }`}
+              >
+                Value Bets
+              </button>
+              <button
+                onClick={() => setViewMode("all")}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  viewMode === "all"
+                    ? "bg-accent-green/20 text-accent-green"
+                    : "text-gray-400 hover:text-white"
+                }`}
+              >
+                All
+              </button>
+            </div>
+          </div>
+
+          {/* Market Filters */}
+          <div className="flex flex-wrap items-center gap-2 mt-3">
+            <button
+              onClick={toggleAllMarkets}
+              className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+                selectedMarkets.size === ALL_MARKETS.length
+                  ? "bg-accent-green/15 border-accent-green/40 text-accent-green"
+                  : "border-brand-border text-gray-500 hover:text-gray-300 hover:border-gray-500"
+              }`}
+            >
+              All Markets
+            </button>
+            {ALL_MARKETS.map((m) => (
+              <button
+                key={m}
+                onClick={() => toggleMarket(m)}
+                className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+                  selectedMarkets.has(m)
+                    ? "bg-accent-green/15 border-accent-green/40 text-accent-green"
+                    : "border-brand-border text-gray-500 hover:text-gray-300 hover:border-gray-500"
+                }`}
+              >
+                {MARKET_LABELS[m]}
+              </button>
+            ))}
+          </div>
         </div>
 
         {fixtureRows.length === 0 ? (
           <div className="px-6 py-12 text-center text-gray-500">
-            No value bets found for today. Run predictions to generate data.
+            {viewMode === "value"
+              ? "No value bets found for today. Run predictions to generate data."
+              : "No predictions found for today. Run predictions to generate data."}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -218,7 +317,7 @@ export default function AdminDashboard() {
                 {fixtureRows.map((row) => {
                   const isExpanded = expandedFixture === row.fixture_id;
                   const fixturePreds = allPredictions.filter(
-                    (p) => p.fixture_id === row.fixture_id
+                    (p) => p.fixture_id === row.fixture_id && selectedMarkets.has(p.market)
                   );
                   return (
                     <FixtureTableRow
