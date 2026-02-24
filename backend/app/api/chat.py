@@ -20,7 +20,7 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
 
 
-@router.post("/")
+@router.post("/chat")
 @limiter.limit("10/minute")
 async def chat(
     request_body: ChatRequest,

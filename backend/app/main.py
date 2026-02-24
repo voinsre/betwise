@@ -82,7 +82,7 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
 app.include_router(fixtures.router, prefix="/api/fixtures", tags=["fixtures"])
 app.include_router(predictions.router, prefix="/api/predictions", tags=["predictions"])
 app.include_router(tickets.router, prefix="/api/tickets", tags=["tickets"])
-app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+app.include_router(chat.router, prefix="/api", tags=["chat"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 
 
