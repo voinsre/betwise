@@ -186,11 +186,47 @@ export default function AccuracyPage() {
   const activeSummary = summaryMap[summaryRange];
   const kpis = computeKPIs(data.summary_30d || empty);
 
-  // Daily rows filtered by market selection (date filtering handled by API)
+  // Daily breakdown: aggregate by market when no date filter, show per-date rows when filtered
   const dailyRows = data.accuracy || [];
-  const filteredDaily = selectedMarket
-    ? dailyRows.filter((r) => r.market === selectedMarket)
-    : dailyRows;
+  const showPerDate = !!filterDate;
+
+  const aggregatedByMarket = !showPerDate
+    ? MARKETS.map((market) => {
+        const rows = dailyRows.filter((r) => r.market === market);
+        if (rows.length === 0) return null;
+        const totalPreds = rows.reduce((s, r) => s + r.total_predictions, 0);
+        const totalCorrect = rows.reduce((s, r) => s + r.correct_predictions, 0);
+        const totalStaked = rows.reduce((s, r) => s + (r.total_staked ?? 0), 0);
+        const totalReturned = rows.reduce((s, r) => s + (r.total_returned ?? 0), 0);
+        const pl = totalReturned - totalStaked;
+        return {
+          market,
+          total_predictions: totalPreds,
+          correct_predictions: totalCorrect,
+          accuracy_pct: totalPreds > 0 ? (totalCorrect / totalPreds) * 100 : 0,
+          avg_edge: totalPreds > 0 ? rows.reduce((s, r) => s + r.avg_edge * r.total_predictions, 0) / totalPreds : 0,
+          avg_confidence: totalPreds > 0 ? Math.round(rows.reduce((s, r) => s + r.avg_confidence * r.total_predictions, 0) / totalPreds) : 0,
+          total_staked: totalStaked,
+          total_returned: totalReturned,
+          profit_loss: pl,
+          roi_pct: totalStaked > 0 ? (pl / totalStaked) * 100 : 0,
+          date_range: `${rows[rows.length - 1].date} — ${rows[0].date}`,
+        };
+      }).filter(Boolean) as Array<{
+        market: string; total_predictions: number; correct_predictions: number;
+        accuracy_pct: number; avg_edge: number; avg_confidence: number;
+        total_staked: number; total_returned: number; profit_loss: number;
+        roi_pct: number; date_range: string;
+      }>
+    : [];
+
+  const filteredDaily = showPerDate
+    ? (selectedMarket ? dailyRows.filter((r) => r.market === selectedMarket) : dailyRows)
+    : [];
+
+  const filteredAggregated = selectedMarket
+    ? aggregatedByMarket.filter((r) => r.market === selectedMarket)
+    : aggregatedByMarket;
 
   return (
     <div className="p-8">
@@ -408,7 +444,7 @@ export default function AccuracyPage() {
           </div>
         </div>
 
-        {filteredDaily.length === 0 ? (
+        {(showPerDate ? filteredDaily : filteredAggregated).length === 0 ? (
           <div className="px-6 py-12 text-center text-gray-500">
             No accuracy data available{filterDate ? ` for ${filterDate}` : ""}. Settlement tracking populates this after matches complete.
           </div>
@@ -417,7 +453,7 @@ export default function AccuracyPage() {
             <table className="w-full">
               <thead>
                 <tr className="text-xs uppercase text-gray-500 border-b border-brand-border">
-                  <th className="px-6 py-3 text-left">Date</th>
+                  <th className="px-6 py-3 text-left">{showPerDate ? "Date" : "Period"}</th>
                   <th className="px-6 py-3 text-left">Market</th>
                   <th className="px-6 py-3 text-right">Predictions</th>
                   <th className="px-6 py-3 text-right">Correct</th>
@@ -431,48 +467,13 @@ export default function AccuracyPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredDaily.map((r, i) => (
-                  <tr key={i} className="border-b border-brand-border/50 hover:bg-brand-surface/50 transition-colors">
-                    <td className="px-6 py-3 text-sm text-gray-400">{r.date}</td>
-                    <td className="px-6 py-3">
-                      <span
-                        className={`text-xs px-2 py-0.5 rounded-md uppercase border ${
-                          MARKET_COLORS[r.market] || "bg-gray-500/15 text-gray-400 border-gray-500/25"
-                        }`}
-                      >
-                        {r.market}
-                      </span>
-                    </td>
-                    <td className="px-6 py-3 text-right font-mono text-gray-300">
-                      {r.total_predictions}
-                    </td>
-                    <td className="px-6 py-3 text-right font-mono text-gray-300">
-                      {r.correct_predictions}
-                    </td>
-                    <td className={`px-6 py-3 text-right font-mono ${accuracyColor(r.market, r.accuracy_pct)}`}>
-                      {r.accuracy_pct.toFixed(1)}%
-                    </td>
-                    <td className="px-6 py-3 text-right font-mono text-gray-300">
-                      {(r.avg_edge * 100).toFixed(2)}%
-                    </td>
-                    <td className={`px-6 py-3 text-right font-mono ${confidenceColor(r.avg_confidence)}`}>
-                      {r.avg_confidence}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono text-gray-400 text-sm hidden lg:table-cell">
-                      {(r.total_staked ?? 0).toFixed(1)}u
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono text-gray-400 text-sm hidden lg:table-cell">
-                      {(r.total_returned ?? 0).toFixed(1)}u
-                    </td>
-                    <td className={`px-6 py-3 text-right font-mono ${plColor(r.profit_loss ?? 0)}`}>
-                      {formatPL(r.profit_loss ?? 0)}
-                    </td>
-                    <td className={`px-6 py-3 text-right font-mono ${plColor(r.roi_pct ?? 0)}`}>
-                      {(r.roi_pct ?? 0) >= 0 ? "+" : ""}
-                      {(r.roi_pct ?? 0).toFixed(1)}%
-                    </td>
-                  </tr>
-                ))}
+                {showPerDate
+                  ? filteredDaily.map((r, i) => (
+                      <DailyRow key={i} r={r} dateLabel={r.date} />
+                    ))
+                  : filteredAggregated.map((r) => (
+                      <DailyRow key={r.market} r={r} dateLabel={r.date_range} />
+                    ))}
               </tbody>
             </table>
           </div>
@@ -487,6 +488,70 @@ export default function AccuracyPage() {
         </div>
       )}
     </div>
+  );
+}
+
+/* ─── DailyRow (shared between aggregated and per-date views) ─── */
+
+function DailyRow({
+  r,
+  dateLabel,
+}: {
+  r: {
+    market: string;
+    total_predictions: number;
+    correct_predictions: number;
+    accuracy_pct: number;
+    avg_edge: number;
+    avg_confidence: number;
+    total_staked?: number;
+    total_returned?: number;
+    profit_loss?: number;
+    roi_pct?: number;
+  };
+  dateLabel: string;
+}) {
+  return (
+    <tr className="border-b border-brand-border/50 hover:bg-brand-surface/50 transition-colors">
+      <td className="px-6 py-3 text-sm text-gray-400">{dateLabel}</td>
+      <td className="px-6 py-3">
+        <span
+          className={`text-xs px-2 py-0.5 rounded-md uppercase border ${
+            MARKET_COLORS[r.market] || "bg-gray-500/15 text-gray-400 border-gray-500/25"
+          }`}
+        >
+          {r.market}
+        </span>
+      </td>
+      <td className="px-6 py-3 text-right font-mono text-gray-300">
+        {r.total_predictions}
+      </td>
+      <td className="px-6 py-3 text-right font-mono text-gray-300">
+        {r.correct_predictions}
+      </td>
+      <td className={`px-6 py-3 text-right font-mono ${accuracyColor(r.market, r.accuracy_pct)}`}>
+        {r.accuracy_pct.toFixed(1)}%
+      </td>
+      <td className="px-6 py-3 text-right font-mono text-gray-300">
+        {(r.avg_edge * 100).toFixed(2)}%
+      </td>
+      <td className={`px-6 py-3 text-right font-mono ${confidenceColor(r.avg_confidence)}`}>
+        {r.avg_confidence}
+      </td>
+      <td className="px-4 py-3 text-right font-mono text-gray-400 text-sm hidden lg:table-cell">
+        {(r.total_staked ?? 0).toFixed(1)}u
+      </td>
+      <td className="px-4 py-3 text-right font-mono text-gray-400 text-sm hidden lg:table-cell">
+        {(r.total_returned ?? 0).toFixed(1)}u
+      </td>
+      <td className={`px-6 py-3 text-right font-mono ${plColor(r.profit_loss ?? 0)}`}>
+        {formatPL(r.profit_loss ?? 0)}
+      </td>
+      <td className={`px-6 py-3 text-right font-mono ${plColor(r.roi_pct ?? 0)}`}>
+        {(r.roi_pct ?? 0) >= 0 ? "+" : ""}
+        {(r.roi_pct ?? 0).toFixed(1)}%
+      </td>
+    </tr>
   );
 }
 
