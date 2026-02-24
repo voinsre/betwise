@@ -38,6 +38,8 @@ app.state.limiter = limiter
 
 # CORS — restrict to known origins
 _allowed_origins = [
+    "https://wizer.bet",
+    "https://www.wizer.bet",
     "https://ideal-amazement-production-53df.up.railway.app",
     "http://localhost:3000",
 ]
