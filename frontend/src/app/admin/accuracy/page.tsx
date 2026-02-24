@@ -176,19 +176,21 @@ export default function AccuracyPage() {
     );
   }
 
-  // Active summary based on range selector
+  // Active summary based on range selector (defensive fallbacks for partial API responses)
+  const empty: Record<string, MarketSummary> = {};
   const summaryMap: Record<RangeKey, Record<string, MarketSummary>> = {
-    "30d": data.summary_30d,
-    "90d": data.summary_90d,
-    all: data.summary_all,
+    "30d": data.summary_30d || empty,
+    "90d": data.summary_90d || empty,
+    all: data.summary_all || empty,
   };
   const activeSummary = summaryMap[summaryRange];
-  const kpis = computeKPIs(data.summary_30d);
+  const kpis = computeKPIs(data.summary_30d || empty);
 
   // Daily rows filtered by market selection (date filtering handled by API)
+  const dailyRows = data.accuracy || [];
   const filteredDaily = selectedMarket
-    ? data.accuracy.filter((r) => r.market === selectedMarket)
-    : data.accuracy;
+    ? dailyRows.filter((r) => r.market === selectedMarket)
+    : dailyRows;
 
   return (
     <div className="p-8">
@@ -457,17 +459,17 @@ export default function AccuracyPage() {
                       {r.avg_confidence}
                     </td>
                     <td className="px-4 py-3 text-right font-mono text-gray-400 text-sm hidden lg:table-cell">
-                      {r.total_staked.toFixed(1)}u
+                      {(r.total_staked ?? 0).toFixed(1)}u
                     </td>
                     <td className="px-4 py-3 text-right font-mono text-gray-400 text-sm hidden lg:table-cell">
-                      {r.total_returned.toFixed(1)}u
+                      {(r.total_returned ?? 0).toFixed(1)}u
                     </td>
-                    <td className={`px-6 py-3 text-right font-mono ${plColor(r.profit_loss)}`}>
-                      {formatPL(r.profit_loss)}
+                    <td className={`px-6 py-3 text-right font-mono ${plColor(r.profit_loss ?? 0)}`}>
+                      {formatPL(r.profit_loss ?? 0)}
                     </td>
-                    <td className={`px-6 py-3 text-right font-mono ${plColor(r.roi_pct)}`}>
-                      {r.roi_pct >= 0 ? "+" : ""}
-                      {r.roi_pct.toFixed(1)}%
+                    <td className={`px-6 py-3 text-right font-mono ${plColor(r.roi_pct ?? 0)}`}>
+                      {(r.roi_pct ?? 0) >= 0 ? "+" : ""}
+                      {(r.roi_pct ?? 0).toFixed(1)}%
                     </td>
                   </tr>
                 ))}
@@ -478,7 +480,7 @@ export default function AccuracyPage() {
       </div>
 
       {/* Footer metadata */}
-      {data.date_range.earliest && (
+      {data.date_range?.earliest && (
         <div className="mt-4 flex gap-6 text-xs text-gray-600">
           <span>Data from {data.date_range.earliest} to {data.date_range.latest}</span>
           <span>{data.date_range.total_days} day{data.date_range.total_days !== 1 ? "s" : ""} of data</span>
