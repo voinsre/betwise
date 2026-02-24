@@ -4,7 +4,7 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 
 import jwt
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -137,21 +137,42 @@ async def get_data_health(db: AsyncSession = Depends(get_db), _admin: dict = Dep
 
 
 @router.get("/accuracy")
-async def get_accuracy(db: AsyncSession = Depends(get_db), _admin: dict = Depends(get_current_admin)):
-    """Model accuracy over time (last 30 days) with summary stats."""
+async def get_accuracy(
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
+    days: int = Query(30, ge=0, le=3650),
+    filter_date: str | None = Query(None, alias="date"),
+):
+    """Model accuracy with multi-range summaries and optional date filtering."""
     today = date.today()
-    cutoff_30 = today - timedelta(days=30)
-    cutoff_7 = today - timedelta(days=7)
 
+    # Fetch all rows — table is small (~5 markets × days of data)
     result = await db.execute(
-        select(ModelAccuracy)
-        .where(ModelAccuracy.date >= cutoff_30)
-        .order_by(ModelAccuracy.date.desc())
+        select(ModelAccuracy).order_by(ModelAccuracy.date.desc())
     )
-    rows = result.scalars().all()
+    all_rows = result.scalars().all()
+
+    # Compute date subsets for summaries
+    cutoff_7 = today - timedelta(days=7)
+    cutoff_30 = today - timedelta(days=30)
+    cutoff_90 = today - timedelta(days=90)
+
+    rows_7d = [r for r in all_rows if r.date >= cutoff_7]
+    rows_30d = [r for r in all_rows if r.date >= cutoff_30]
+    rows_90d = [r for r in all_rows if r.date >= cutoff_90]
+
+    # Build daily detail rows (filtered by days param or specific date)
+    if filter_date:
+        target = date.fromisoformat(filter_date)
+        detail_rows = [r for r in all_rows if r.date == target]
+    elif days > 0:
+        cutoff = today - timedelta(days=days)
+        detail_rows = [r for r in all_rows if r.date >= cutoff]
+    else:
+        detail_rows = all_rows
 
     items = []
-    for r in rows:
+    for r in detail_rows:
         items.append({
             "date": str(r.date),
             "market": r.market,
@@ -167,17 +188,21 @@ async def get_accuracy(db: AsyncSession = Depends(get_db), _admin: dict = Depend
             "roi_pct": r.roi_pct,
         })
 
-    # Build per-market summary for 7-day and 30-day windows
     def _summarize(rows_list):
         by_market = {}
         for r in rows_list:
             m = r.market
             if m not in by_market:
-                by_market[m] = {"total": 0, "correct": 0, "staked": 0.0, "returned": 0.0}
+                by_market[m] = {
+                    "total": 0, "correct": 0, "staked": 0.0, "returned": 0.0,
+                    "edge_sum": 0.0, "conf_sum": 0.0,
+                }
             by_market[m]["total"] += r.total_predictions
             by_market[m]["correct"] += r.correct_predictions
             by_market[m]["staked"] += r.total_staked
             by_market[m]["returned"] += r.total_returned
+            by_market[m]["edge_sum"] += r.avg_edge * r.total_predictions
+            by_market[m]["conf_sum"] += r.avg_confidence * r.total_predictions
 
         summary = {}
         for m, s in by_market.items():
@@ -186,18 +211,26 @@ async def get_accuracy(db: AsyncSession = Depends(get_db), _admin: dict = Depend
                 "total_predictions": s["total"],
                 "correct_predictions": s["correct"],
                 "accuracy_pct": round(s["correct"] / s["total"] * 100, 1) if s["total"] > 0 else 0.0,
+                "avg_edge": round(s["edge_sum"] / s["total"], 4) if s["total"] > 0 else 0.0,
+                "avg_confidence": round(s["conf_sum"] / s["total"]) if s["total"] > 0 else 0,
                 "total_staked": round(s["staked"], 2),
+                "total_returned": round(s["returned"], 2),
                 "profit_loss": round(pl, 2),
                 "roi_pct": round(pl / s["staked"] * 100, 1) if s["staked"] > 0 else 0.0,
             }
         return summary
 
-    rows_7d = [r for r in rows if r.date >= cutoff_7]
-
     return {
         "accuracy": items,
         "summary_7d": _summarize(rows_7d),
-        "summary_30d": _summarize(rows),
+        "summary_30d": _summarize(rows_30d),
+        "summary_90d": _summarize(rows_90d),
+        "summary_all": _summarize(all_rows),
+        "date_range": {
+            "earliest": str(all_rows[-1].date) if all_rows else None,
+            "latest": str(all_rows[0].date) if all_rows else None,
+            "total_days": len(set(r.date for r in all_rows)),
+        },
     }
 
 

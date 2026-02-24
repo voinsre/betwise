@@ -87,7 +87,25 @@ export async function getDataHealth() {
   }>("/api/admin/data-health", { auth: true });
 }
 
-export async function getAccuracy() {
+interface MarketSummary {
+  total_predictions: number;
+  correct_predictions: number;
+  accuracy_pct: number;
+  avg_edge: number;
+  avg_confidence: number;
+  total_staked: number;
+  total_returned: number;
+  profit_loss: number;
+  roi_pct: number;
+}
+
+export async function getAccuracy(params?: { days?: number; date?: string }) {
+  const searchParams = new URLSearchParams();
+  if (params?.days !== undefined) searchParams.set("days", String(params.days));
+  if (params?.date) searchParams.set("date", params.date);
+  const qs = searchParams.toString();
+  const path = `/api/admin/accuracy${qs ? `?${qs}` : ""}`;
+
   return fetchApi<{
     accuracy: Array<{
       date: string;
@@ -98,10 +116,21 @@ export async function getAccuracy() {
       accuracy_pct: number;
       avg_edge: number;
       avg_confidence: number;
+      total_staked: number;
+      total_returned: number;
       profit_loss: number;
       roi_pct: number;
     }>;
-  }>("/api/admin/accuracy", { auth: true });
+    summary_7d: Record<string, MarketSummary>;
+    summary_30d: Record<string, MarketSummary>;
+    summary_90d: Record<string, MarketSummary>;
+    summary_all: Record<string, MarketSummary>;
+    date_range: {
+      earliest: string | null;
+      latest: string | null;
+      total_days: number;
+    };
+  }>(path, { auth: true });
 }
 
 export async function getMarketAccuracy(market: string) {
