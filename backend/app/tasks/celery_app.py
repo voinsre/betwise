@@ -21,6 +21,7 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     broker_connection_retry_on_startup=True,
+    beat_scheduler="celery.beat.Scheduler",
 )
 
 celery_app.conf.beat_schedule = {
