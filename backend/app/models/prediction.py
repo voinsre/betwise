@@ -21,6 +21,7 @@ class Prediction(Base):
     expected_value: Mapped[float] = mapped_column(Float)
     confidence_score: Mapped[int] = mapped_column(Integer)
     is_value_bet: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_correct: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
 
     fixture = relationship("Fixture", back_populates="predictions")
 

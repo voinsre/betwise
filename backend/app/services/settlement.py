@@ -2,13 +2,16 @@
 
 Core settlement logic: evaluates prediction correctness against actual
 fixture results, logs accuracy, and settles tickets. No Celery dependency.
+
+Self-healing: find_unsettled_dates() discovers dates with pending work
+by querying predictions where is_correct IS NULL on FT fixtures.
 """
 
 import logging
 from collections import defaultdict
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import bindparam, delete, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.models.fixture import Fixture
@@ -20,6 +23,34 @@ from app.services.data_sync import DataSyncService
 logger = logging.getLogger(__name__)
 
 FLAT_STAKE = 10.0  # simulated flat stake per bet
+LOOKBACK_DAYS = 14  # max days to look back for unsettled predictions
+
+
+# ── Self-healing discovery ──────────────────────────────────────
+
+async def find_unsettled_dates(
+    session_factory: async_sessionmaker,
+    lookback_days: int = LOOKBACK_DAYS,
+) -> list[date]:
+    """
+    Find dates with unsettled predictions (is_correct IS NULL) on FT fixtures.
+    Returns sorted list of dates (oldest first) that need settlement.
+    """
+    cutoff = date.today() - timedelta(days=lookback_days)
+
+    async with session_factory() as session:
+        result = await session.execute(
+            select(Fixture.date)
+            .join(Prediction, Prediction.fixture_id == Fixture.id)
+            .where(
+                Prediction.is_correct.is_(None),
+                Fixture.status == "FT",
+                Fixture.date >= cutoff,
+            )
+            .distinct()
+            .order_by(Fixture.date)
+        )
+        return [row[0] for row in result.all()]
 
 
 # ── Result evaluation helpers ────────────────────────────────────
@@ -102,9 +133,10 @@ async def settle_fixtures_for_date(
 ) -> dict:
     """
     Full settlement pipeline for a given date.
-    Returns summary dict with counts and accuracy.
+    Idempotent: deletes old accuracy rows, re-evaluates all predictions,
+    and stamps is_correct on each prediction.
     """
-    # 1. Re-sync today's fixtures to get latest scores/statuses
+    # 1. Re-sync fixtures to get latest scores/statuses
     logger.info("Step 1: Re-syncing fixtures for %s to get final scores...", target_date)
     await sync_service.sync_fixtures_for_date(target_date.isoformat())
 
@@ -144,7 +176,7 @@ async def settle_fixtures_for_date(
         except Exception as e:
             logger.warning("Failed to update last20 for fixture %d teams: %s", fx.id, e)
 
-    # 4. Load all predictions for settled fixtures
+    # 4. Load all predictions for these fixtures
     async with session_factory() as session:
         pred_result = await session.execute(
             select(Prediction).where(Prediction.fixture_id.in_(fixture_ids))
@@ -153,7 +185,7 @@ async def settle_fixtures_for_date(
 
     logger.info("Step 3: Evaluating %d predictions across %d fixtures...", len(predictions), len(finished_fixtures))
 
-    # 5. Evaluate each prediction
+    # 5. Evaluate each prediction, collect results and stats
     market_stats: dict[str, dict] = defaultdict(lambda: {
         "total": 0, "correct": 0, "edges": [], "confidences": [],
         "staked": 0.0, "returned": 0.0,
@@ -161,6 +193,7 @@ async def settle_fixtures_for_date(
 
     settled_count = 0
     correct_count = 0
+    pred_updates: list[dict] = []  # [{pred_id, is_correct_val}, ...]
 
     for pred in predictions:
         fixture = fixture_map.get(pred.fixture_id)
@@ -169,9 +202,13 @@ async def settle_fixtures_for_date(
 
         is_correct = evaluate_prediction(pred, fixture)
         if is_correct is None:
+            # Can't evaluate (e.g., missing HT scores for htft).
+            # Leave is_correct as NULL — retried on next run.
             continue
 
         settled_count += 1
+        pred_updates.append({"pred_id": pred.id, "is_correct_val": is_correct})
+
         market_key = pred.market
         stats = market_stats[market_key]
         stats["total"] += 1
@@ -187,9 +224,26 @@ async def settle_fixtures_for_date(
             correct_count += 1
             stats["correct"] += 1
 
-    # 6. Write model_accuracy rows
-    logger.info("Step 4: Writing accuracy records for %d markets...", len(market_stats))
+    # 6. Atomic write: update predictions + delete/rewrite accuracy rows
+    logger.info("Step 4: Writing %d prediction results + accuracy for %d markets...",
+                len(pred_updates), len(market_stats))
+
     async with session_factory() as session:
+        # 6a. Bulk update is_correct on predictions
+        if pred_updates:
+            stmt = (
+                update(Prediction)
+                .where(Prediction.id == bindparam("pred_id"))
+                .values(is_correct=bindparam("is_correct_val"))
+            )
+            await session.execute(stmt, pred_updates)
+
+        # 6b. Delete existing accuracy rows for this date (idempotency)
+        await session.execute(
+            delete(ModelAccuracy).where(ModelAccuracy.date == target_date)
+        )
+
+        # 6c. Insert fresh accuracy rows
         for market, stats in market_stats.items():
             total = stats["total"]
             correct = stats["correct"]
