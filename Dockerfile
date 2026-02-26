@@ -12,6 +12,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ .
 COPY ml/models/ ./ml/models/
+COPY start.sh .
+RUN sed -i 's/\r$//' start.sh && chmod +x start.sh
 
 RUN adduser --disabled-password --no-create-home appuser
 USER appuser
@@ -19,4 +21,4 @@ USER appuser
 EXPOSE 2323
 ENV PYTHONPATH=/app
 
-CMD ["sh", "-c", "python -m alembic -c alembic/alembic.ini upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 2323"]
+CMD ["./start.sh"]
