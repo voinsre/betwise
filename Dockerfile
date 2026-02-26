@@ -17,5 +17,6 @@ RUN adduser --disabled-password --no-create-home appuser
 USER appuser
 
 EXPOSE 2323
+ENV PYTHONPATH=/app
 
-CMD ["sh", "-c", "alembic -c alembic/alembic.ini upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 2323"]
+CMD ["sh", "-c", "python -m alembic -c alembic/alembic.ini upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 2323"]
