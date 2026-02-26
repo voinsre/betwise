@@ -349,6 +349,8 @@ async def _run_pipeline():
             "Pipeline complete: %d predictions, %d value bets across %d fixtures",
             total_preds, total_value, len(pred_fixtures),
         )
+    except Exception:
+        logger.exception("Pipeline FAILED")
     finally:
         await client.close()
         await engine.dispose()
@@ -376,6 +378,8 @@ async def _run_settlement(target_date: date):
         sync = DataSyncService(session_factory, client)
         summary = await settle_fixtures_for_date(target_date, session_factory, sync)
         logger.info("Settlement for %s complete: %s", target_date, summary)
+    except Exception:
+        logger.exception("Settlement FAILED for %s", target_date)
     finally:
         await client.close()
         await engine.dispose()
