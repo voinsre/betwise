@@ -235,6 +235,7 @@ async def settle_fixtures_for_date(
                 update(Prediction)
                 .where(Prediction.id == bindparam("pred_id"))
                 .values(is_correct=bindparam("is_correct_val"))
+                .execution_options(synchronize_session=None)
             )
             await session.execute(stmt, pred_updates)
 
