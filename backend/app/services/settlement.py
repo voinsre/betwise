@@ -229,13 +229,13 @@ async def settle_fixtures_for_date(
                 len(pred_updates), len(market_stats))
 
     async with session_factory() as session:
-        # 6a. Bulk update is_correct on predictions
+        # 6a. Bulk update is_correct on predictions (Core-level to bypass ORM)
         if pred_updates:
+            tbl = Prediction.__table__
             stmt = (
-                update(Prediction)
-                .where(Prediction.id == bindparam("pred_id"))
+                tbl.update()
+                .where(tbl.c.id == bindparam("pred_id"))
                 .values(is_correct=bindparam("is_correct_val"))
-                .execution_options(synchronize_session=None)
             )
             await session.execute(stmt, pred_updates)
 
