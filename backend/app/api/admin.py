@@ -187,6 +187,12 @@ async def get_accuracy(
             "total_returned": r.total_returned,
             "profit_loss": r.profit_loss,
             "roi_pct": r.roi_pct,
+            "top_pick_count": r.top_pick_count,
+            "top_pick_correct": r.top_pick_correct,
+            "top_pick_accuracy_pct": r.top_pick_accuracy_pct,
+            "value_bet_count": r.value_bet_count,
+            "value_bet_correct": r.value_bet_correct,
+            "value_bet_accuracy_pct": r.value_bet_accuracy_pct,
         })
 
     def _summarize(rows_list):
@@ -197,6 +203,8 @@ async def get_accuracy(
                 by_market[m] = {
                     "total": 0, "correct": 0, "staked": 0.0, "returned": 0.0,
                     "edge_sum": 0.0, "conf_sum": 0.0,
+                    "tp_count": 0, "tp_correct": 0,
+                    "vb_count": 0, "vb_correct": 0,
                 }
             by_market[m]["total"] += r.total_predictions
             by_market[m]["correct"] += r.correct_predictions
@@ -204,10 +212,16 @@ async def get_accuracy(
             by_market[m]["returned"] += r.total_returned
             by_market[m]["edge_sum"] += r.avg_edge * r.total_predictions
             by_market[m]["conf_sum"] += r.avg_confidence * r.total_predictions
+            by_market[m]["tp_count"] += r.top_pick_count
+            by_market[m]["tp_correct"] += r.top_pick_correct
+            by_market[m]["vb_count"] += r.value_bet_count
+            by_market[m]["vb_correct"] += r.value_bet_correct
 
         summary = {}
         for m, s in by_market.items():
             pl = s["returned"] - s["staked"]
+            tp_count = s["tp_count"]
+            vb_count = s["vb_count"]
             summary[m] = {
                 "total_predictions": s["total"],
                 "correct_predictions": s["correct"],
@@ -218,6 +232,12 @@ async def get_accuracy(
                 "total_returned": round(s["returned"], 2),
                 "profit_loss": round(pl, 2),
                 "roi_pct": round(pl / s["staked"] * 100, 1) if s["staked"] > 0 else 0.0,
+                "top_pick_count": tp_count,
+                "top_pick_correct": s["tp_correct"],
+                "top_pick_accuracy_pct": round(s["tp_correct"] / tp_count * 100, 1) if tp_count > 0 else 0.0,
+                "value_bet_count": vb_count,
+                "value_bet_correct": s["vb_correct"],
+                "value_bet_accuracy_pct": round(s["vb_correct"] / vb_count * 100, 1) if vb_count > 0 else 0.0,
             }
         return summary
 
@@ -255,6 +275,12 @@ async def get_market_accuracy(market: str, db: AsyncSession = Depends(get_db), _
             "accuracy_pct": r.accuracy_pct,
             "avg_edge": r.avg_edge,
             "roi_pct": r.roi_pct,
+            "top_pick_count": r.top_pick_count,
+            "top_pick_correct": r.top_pick_correct,
+            "top_pick_accuracy_pct": r.top_pick_accuracy_pct,
+            "value_bet_count": r.value_bet_count,
+            "value_bet_correct": r.value_bet_correct,
+            "value_bet_accuracy_pct": r.value_bet_accuracy_pct,
         })
 
     return {"market": market, "accuracy": items}

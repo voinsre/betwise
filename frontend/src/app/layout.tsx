@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://wizer.bet"),
   title: "WizerBet — AI Football Betting Intelligence",
   description: "AI-powered predictions and value bet detection across 15 leagues",
   manifest: "/manifest.json",

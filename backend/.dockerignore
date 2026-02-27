@@ -6,7 +6,6 @@ venv
 .pytest_cache
 tests
 scripts
-alembic/versions
 .git
 *.md
 .vscode

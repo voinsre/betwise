@@ -22,3 +22,13 @@ class ModelAccuracy(Base):
     total_returned: Mapped[float] = mapped_column(Float)
     profit_loss: Mapped[float] = mapped_column(Float)
     roi_pct: Mapped[float] = mapped_column(Float)
+
+    # Top-pick accuracy (one pick per fixture/market — highest blended_probability)
+    top_pick_count: Mapped[int] = mapped_column(Integer, default=0)
+    top_pick_correct: Mapped[int] = mapped_column(Integer, default=0)
+    top_pick_accuracy_pct: Mapped[float] = mapped_column(Float, default=0.0)
+
+    # Value-bet accuracy (is_value_bet=true predictions only)
+    value_bet_count: Mapped[int] = mapped_column(Integer, default=0)
+    value_bet_correct: Mapped[int] = mapped_column(Integer, default=0)
+    value_bet_accuracy_pct: Mapped[float] = mapped_column(Float, default=0.0)

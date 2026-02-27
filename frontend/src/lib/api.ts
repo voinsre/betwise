@@ -97,6 +97,12 @@ interface MarketSummary {
   total_returned: number;
   profit_loss: number;
   roi_pct: number;
+  top_pick_count: number;
+  top_pick_correct: number;
+  top_pick_accuracy_pct: number;
+  value_bet_count: number;
+  value_bet_correct: number;
+  value_bet_accuracy_pct: number;
 }
 
 export async function getAccuracy(params?: { days?: number; date?: string }) {
@@ -120,6 +126,12 @@ export async function getAccuracy(params?: { days?: number; date?: string }) {
       total_returned: number;
       profit_loss: number;
       roi_pct: number;
+      top_pick_count: number;
+      top_pick_correct: number;
+      top_pick_accuracy_pct: number;
+      value_bet_count: number;
+      value_bet_correct: number;
+      value_bet_accuracy_pct: number;
     }>;
     summary_7d: Record<string, MarketSummary>;
     summary_30d: Record<string, MarketSummary>;

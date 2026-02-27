@@ -18,6 +18,12 @@ interface AccuracyRow {
   total_returned: number;
   profit_loss: number;
   roi_pct: number;
+  top_pick_count: number;
+  top_pick_correct: number;
+  top_pick_accuracy_pct: number;
+  value_bet_count: number;
+  value_bet_correct: number;
+  value_bet_accuracy_pct: number;
 }
 
 interface MarketSummary {
@@ -30,6 +36,12 @@ interface MarketSummary {
   total_returned: number;
   profit_loss: number;
   roi_pct: number;
+  top_pick_count: number;
+  top_pick_correct: number;
+  top_pick_accuracy_pct: number;
+  value_bet_count: number;
+  value_bet_correct: number;
+  value_bet_accuracy_pct: number;
 }
 
 interface AccuracyData {
@@ -41,7 +53,7 @@ interface AccuracyData {
   date_range: { earliest: string | null; latest: string | null; total_days: number };
 }
 
-type RangeKey = "30d" | "90d" | "all";
+type RangeKey = "7d" | "30d" | "90d" | "all";
 
 /* ─── Constants ─── */
 
@@ -63,9 +75,9 @@ const MARKET_BAR_COLORS: Record<string, string> = {
   htft: "bg-orange-500",
 };
 
-// Market-aware accuracy thresholds: [green_min, amber_min]
+// Market-aware top-pick accuracy thresholds: [green_min, amber_min]
 // Based on random baselines: 1x2=33%, ou25/btts=50%, dc=66%, htft=11%
-const ACCURACY_THRESHOLDS: Record<string, [number, number]> = {
+const TOP_PICK_THRESHOLDS: Record<string, [number, number]> = {
   "1x2": [45, 33],
   ou25: [60, 50],
   btts: [60, 50],
@@ -74,24 +86,32 @@ const ACCURACY_THRESHOLDS: Record<string, [number, number]> = {
 };
 
 const RANGE_LABELS: Record<RangeKey, string> = {
+  "7d": "7D",
   "30d": "30D",
   "90d": "90D",
-  all: "All-time",
+  all: "All",
+};
+
+const RANGE_DAYS: Record<RangeKey, number> = {
+  "7d": 7,
+  "30d": 30,
+  "90d": 90,
+  all: 0,
 };
 
 /* ─── Helpers ─── */
 
-function accuracyColor(market: string, pct: number): string {
-  const [green, amber] = ACCURACY_THRESHOLDS[market] || [60, 50];
+function topPickColor(market: string, pct: number): string {
+  const [green, amber] = TOP_PICK_THRESHOLDS[market] || [60, 50];
   if (pct >= green) return "text-accent-green";
   if (pct >= amber) return "text-accent-amber";
   return "text-accent-red";
 }
 
-function confidenceColor(c: number): string {
-  if (c >= 80) return "text-accent-green";
-  if (c >= 65) return "text-accent-amber";
-  return "text-gray-400";
+function vbColor(pct: number): string {
+  if (pct >= 50) return "text-accent-green";
+  if (pct >= 35) return "text-accent-amber";
+  return "text-accent-red";
 }
 
 function plColor(v: number): string {
@@ -103,19 +123,22 @@ function formatPL(v: number): string {
 }
 
 function computeKPIs(summary: Record<string, MarketSummary>) {
-  let totalPreds = 0,
-    totalCorrect = 0,
-    totalStaked = 0,
-    totalPL = 0;
+  let totalTopPick = 0, totalTopPickCorrect = 0;
+  let totalValueBet = 0, totalValueBetCorrect = 0;
+  let totalStaked = 0, totalPL = 0;
   for (const ms of Object.values(summary)) {
-    totalPreds += ms.total_predictions;
-    totalCorrect += ms.correct_predictions;
-    totalStaked += ms.total_staked;
-    totalPL += ms.profit_loss;
+    totalTopPick += ms.top_pick_count ?? 0;
+    totalTopPickCorrect += ms.top_pick_correct ?? 0;
+    totalValueBet += ms.value_bet_count ?? 0;
+    totalValueBetCorrect += ms.value_bet_correct ?? 0;
+    totalStaked += ms.total_staked ?? 0;
+    totalPL += ms.profit_loss ?? 0;
   }
   return {
-    totalPreds,
-    overallAccuracy: totalPreds > 0 ? (totalCorrect / totalPreds) * 100 : 0,
+    topPickAccuracy: totalTopPick > 0 ? (totalTopPickCorrect / totalTopPick) * 100 : 0,
+    topPickCount: totalTopPick,
+    valueBetAccuracy: totalValueBet > 0 ? (totalValueBetCorrect / totalValueBet) * 100 : 0,
+    valueBetCount: totalValueBet,
     totalPL,
     overallROI: totalStaked > 0 ? (totalPL / totalStaked) * 100 : 0,
   };
@@ -128,22 +151,25 @@ export default function AccuracyPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Per-market summary range
   const [summaryRange, setSummaryRange] = useState<RangeKey>("30d");
 
-  // Daily breakdown controls
   const [selectedMarket, setSelectedMarket] = useState<string | null>(null);
   const [filterDate, setFilterDate] = useState("");
 
   const fetchData = useCallback(async (dateFilter?: string) => {
     try {
-      const params = dateFilter ? { date: dateFilter } : undefined;
+      const params: { days?: number; date?: string } = {};
+      if (dateFilter) {
+        params.date = dateFilter;
+      } else {
+        params.days = RANGE_DAYS[summaryRange];
+      }
       const res = await getAccuracy(params);
       setData(res);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load");
     }
-  }, []);
+  }, [summaryRange]);
 
   useEffect(() => {
     setLoading(true);
@@ -152,9 +178,9 @@ export default function AccuracyPage() {
 
   // Refetch when date filter changes
   useEffect(() => {
-    if (!data) return; // skip initial
+    if (!data) return;
     fetchData(filterDate || undefined);
-  }, [filterDate, fetchData]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filterDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) {
     return (
@@ -176,20 +202,18 @@ export default function AccuracyPage() {
     );
   }
 
-  // Active summary based on range selector (defensive fallbacks for partial API responses)
   const empty: Record<string, MarketSummary> = {};
   const summaryMap: Record<RangeKey, Record<string, MarketSummary>> = {
+    "7d": data.summary_7d || empty,
     "30d": data.summary_30d || empty,
     "90d": data.summary_90d || empty,
     all: data.summary_all || empty,
   };
   const activeSummary = summaryMap[summaryRange];
-  const kpis = computeKPIs(data.summary_30d || empty);
+  const kpis = computeKPIs(activeSummary);
+  const rangeLabel = RANGE_LABELS[summaryRange];
 
-  // Daily breakdown: always show per-date rows (rolling view), sorted newest-first.
-  // Date picker and market selector act as filters on top.
   const dailyRows = data.accuracy || [];
-
   const filteredDaily = dailyRows
     .filter((r) => {
       if (filterDate && r.date !== filterDate) return false;
@@ -204,7 +228,7 @@ export default function AccuracyPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-white">Model Accuracy</h1>
         <p className="text-gray-500 text-sm mt-1">
-          Prediction performance &amp; profitability tracking
+          Top-pick prediction skill &amp; value bet profitability
         </p>
       </div>
 
@@ -217,26 +241,30 @@ export default function AccuracyPage() {
       {/* KPI Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <SummaryCard
-          label="Total Predictions"
-          value={kpis.totalPreds.toLocaleString()}
-          icon="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"
-        />
-        <SummaryCard
-          label="Overall Accuracy"
-          value={kpis.overallAccuracy.toFixed(1)}
-          suffix="%"
-          accent={kpis.overallAccuracy >= 50 ? "green" : kpis.overallAccuracy >= 40 ? "amber" : "red"}
+          label={`${rangeLabel} Top-Pick Accuracy`}
+          value={kpis.topPickCount > 0 ? kpis.topPickAccuracy.toFixed(1) : "--"}
+          suffix={kpis.topPickCount > 0 ? "%" : ""}
+          subtext={kpis.topPickCount > 0 ? `${kpis.topPickCount} fixtures` : undefined}
+          accent={kpis.topPickCount > 0 ? (kpis.topPickAccuracy >= 50 ? "green" : kpis.topPickAccuracy >= 35 ? "amber" : "red") : undefined}
           icon="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
         />
         <SummaryCard
-          label="30d P&L"
+          label={`${rangeLabel} Value Bet Hit Rate`}
+          value={kpis.valueBetCount > 0 ? kpis.valueBetAccuracy.toFixed(1) : "--"}
+          suffix={kpis.valueBetCount > 0 ? "%" : ""}
+          subtext={kpis.valueBetCount > 0 ? `${kpis.valueBetCount} bets` : undefined}
+          accent={kpis.valueBetCount > 0 ? (kpis.valueBetAccuracy >= 50 ? "green" : kpis.valueBetAccuracy >= 35 ? "amber" : "red") : undefined}
+          icon="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"
+        />
+        <SummaryCard
+          label={`${rangeLabel} P&L (Value Bets)`}
           value={formatPL(kpis.totalPL)}
           suffix="u"
           accent={kpis.totalPL >= 0 ? "green" : "red"}
           icon="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
         />
         <SummaryCard
-          label="30d ROI"
+          label={`${rangeLabel} ROI (Value Bets)`}
           value={`${kpis.overallROI >= 0 ? "+" : ""}${kpis.overallROI.toFixed(1)}`}
           suffix="%"
           accent={kpis.overallROI >= 0 ? "green" : "red"}
@@ -249,7 +277,7 @@ export default function AccuracyPage() {
         <div className="px-6 py-4 border-b border-brand-border flex items-center justify-between">
           <h2 className="text-lg font-semibold text-white">Per-Market Summary</h2>
           <div className="flex gap-1 bg-brand-surface rounded-lg p-1">
-            {(["30d", "90d", "all"] as RangeKey[]).map((range) => (
+            {(["7d", "30d", "90d", "all"] as RangeKey[]).map((range) => (
               <button
                 key={range}
                 onClick={() => setSummaryRange(range)}
@@ -269,13 +297,11 @@ export default function AccuracyPage() {
             <thead>
               <tr className="text-xs uppercase text-gray-500 border-b border-brand-border">
                 <th className="px-6 py-3 text-left">Market</th>
-                <th className="px-6 py-3 text-right">Predictions</th>
-                <th className="px-6 py-3 text-right">Correct</th>
-                <th className="px-6 py-3 text-right">Accuracy</th>
-                <th className="px-6 py-3 text-right">Avg Edge</th>
-                <th className="px-6 py-3 text-right">Confidence</th>
-                <th className="px-4 py-3 text-right hidden lg:table-cell">Staked</th>
-                <th className="px-4 py-3 text-right hidden lg:table-cell">Returned</th>
+                <th className="px-4 py-3 text-right">Fixtures</th>
+                <th className="px-4 py-3 text-right">Top Pick</th>
+                <th className="px-4 py-3 text-right hidden sm:table-cell">VB</th>
+                <th className="px-4 py-3 text-right hidden sm:table-cell">VB Hit</th>
+                <th className="px-4 py-3 text-right">Avg Edge</th>
                 <th className="px-6 py-3 text-right">P&amp;L</th>
                 <th className="px-6 py-3 text-right">ROI</th>
               </tr>
@@ -283,7 +309,7 @@ export default function AccuracyPage() {
             <tbody>
               {MARKETS.map((market) => {
                 const ms = activeSummary[market];
-                const isEmpty = !ms || ms.total_predictions === 0;
+                const isEmpty = !ms || (ms.top_pick_count ?? 0) === 0;
                 const isSelected = selectedMarket === market;
 
                 return (
@@ -308,65 +334,60 @@ export default function AccuracyPage() {
                         {market}
                       </span>
                     </td>
-                    <td className="px-6 py-3 text-right font-mono text-gray-300">
-                      {isEmpty ? "--" : ms.total_predictions.toLocaleString()}
+                    <td className="px-4 py-3 text-right font-mono text-gray-300">
+                      {isEmpty ? "--" : (ms.top_pick_count ?? 0)}
                     </td>
-                    <td className="px-6 py-3 text-right font-mono text-gray-300">
-                      {isEmpty ? "--" : ms.correct_predictions.toLocaleString()}
-                    </td>
-                    <td className="px-6 py-3 text-right">
+                    <td className="px-4 py-3 text-right">
                       {isEmpty ? (
                         <span className="font-mono text-gray-600">--</span>
                       ) : (
-                        <div className="flex items-center justify-end gap-3">
+                        <div className="flex items-center justify-end gap-2">
+                          <span className="text-xs text-gray-500">
+                            {ms.top_pick_correct ?? 0}/{ms.top_pick_count ?? 0}
+                          </span>
                           <span
-                            className={`font-mono text-sm min-w-[48px] text-right ${accuracyColor(
+                            className={`font-mono text-sm min-w-[44px] text-right ${topPickColor(
                               market,
-                              ms.accuracy_pct
+                              ms.top_pick_accuracy_pct ?? 0
                             )}`}
                           >
-                            {ms.accuracy_pct.toFixed(1)}%
+                            {(ms.top_pick_accuracy_pct ?? 0).toFixed(1)}%
                           </span>
-                          <div className="w-[80px] h-1.5 bg-brand-bg rounded-full overflow-hidden">
+                          <div className="w-[60px] h-1.5 bg-brand-bg rounded-full overflow-hidden hidden lg:block">
                             <div
                               className={`h-full rounded-full transition-all ${
                                 MARKET_BAR_COLORS[market] || "bg-gray-500"
                               }`}
-                              style={{ width: `${Math.min(ms.accuracy_pct, 100)}%` }}
+                              style={{ width: `${Math.min(ms.top_pick_accuracy_pct ?? 0, 100)}%` }}
                             />
                           </div>
                         </div>
                       )}
                     </td>
-                    <td className="px-6 py-3 text-right font-mono text-gray-300">
-                      {isEmpty ? "--" : `${(ms.avg_edge * 100).toFixed(2)}%`}
+                    <td className="px-4 py-3 text-right font-mono text-gray-300 hidden sm:table-cell">
+                      {isEmpty ? "--" : (ms.value_bet_count ?? 0)}
+                    </td>
+                    <td className={`px-4 py-3 text-right font-mono hidden sm:table-cell ${
+                      isEmpty ? "text-gray-600" : vbColor(ms.value_bet_accuracy_pct ?? 0)
+                    }`}>
+                      {isEmpty ? "--" : `${(ms.value_bet_accuracy_pct ?? 0).toFixed(1)}%`}
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono text-gray-300">
+                      {isEmpty ? "--" : `${((ms.avg_edge ?? 0) * 100).toFixed(2)}%`}
                     </td>
                     <td
                       className={`px-6 py-3 text-right font-mono ${
-                        isEmpty ? "text-gray-600" : confidenceColor(ms?.avg_confidence ?? 0)
+                        isEmpty ? "text-gray-600" : plColor(ms.profit_loss ?? 0)
                       }`}
                     >
-                      {isEmpty ? "--" : ms.avg_confidence}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono text-gray-400 text-sm hidden lg:table-cell">
-                      {isEmpty ? "--" : `${ms.total_staked.toFixed(1)}u`}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono text-gray-400 text-sm hidden lg:table-cell">
-                      {isEmpty ? "--" : `${ms.total_returned.toFixed(1)}u`}
+                      {isEmpty ? "--" : formatPL(ms.profit_loss ?? 0)}
                     </td>
                     <td
                       className={`px-6 py-3 text-right font-mono ${
-                        isEmpty ? "text-gray-600" : plColor(ms.profit_loss)
+                        isEmpty ? "text-gray-600" : plColor(ms.roi_pct ?? 0)
                       }`}
                     >
-                      {isEmpty ? "--" : formatPL(ms.profit_loss)}
-                    </td>
-                    <td
-                      className={`px-6 py-3 text-right font-mono ${
-                        isEmpty ? "text-gray-600" : plColor(ms.roi_pct)
-                      }`}
-                    >
-                      {isEmpty ? "--" : `${ms.roi_pct >= 0 ? "+" : ""}${ms.roi_pct.toFixed(1)}%`}
+                      {isEmpty ? "--" : `${(ms.roi_pct ?? 0) >= 0 ? "+" : ""}${(ms.roi_pct ?? 0).toFixed(1)}%`}
                     </td>
                   </tr>
                 );
@@ -424,21 +445,19 @@ export default function AccuracyPage() {
               <thead>
                 <tr className="text-xs uppercase text-gray-500 border-b border-brand-border">
                   <th className="px-6 py-3 text-left">Date</th>
-                  <th className="px-6 py-3 text-left">Market</th>
-                  <th className="px-6 py-3 text-right">Predictions</th>
-                  <th className="px-6 py-3 text-right">Correct</th>
-                  <th className="px-6 py-3 text-right">Accuracy</th>
-                  <th className="px-6 py-3 text-right">Avg Edge</th>
-                  <th className="px-6 py-3 text-right">Confidence</th>
-                  <th className="px-4 py-3 text-right hidden lg:table-cell">Staked</th>
-                  <th className="px-4 py-3 text-right hidden lg:table-cell">Returned</th>
+                  <th className="px-4 py-3 text-left">Market</th>
+                  <th className="px-4 py-3 text-right">Fixtures</th>
+                  <th className="px-4 py-3 text-right">Top Pick</th>
+                  <th className="px-4 py-3 text-right hidden sm:table-cell">VB</th>
+                  <th className="px-4 py-3 text-right hidden sm:table-cell">VB Hit</th>
+                  <th className="px-4 py-3 text-right">Avg Edge</th>
                   <th className="px-6 py-3 text-right">P&amp;L</th>
                   <th className="px-6 py-3 text-right">ROI</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredDaily.map((r, i) => (
-                  <DailyRow key={`${r.date}-${r.market}`} r={r} dateLabel={r.date} />
+                {filteredDaily.map((r) => (
+                  <DailyRow key={`${r.date}-${r.market}`} r={r} />
                 ))}
               </tbody>
             </table>
@@ -457,30 +476,19 @@ export default function AccuracyPage() {
   );
 }
 
-/* ─── DailyRow (shared between aggregated and per-date views) ─── */
+/* ─── DailyRow ─── */
 
-function DailyRow({
-  r,
-  dateLabel,
-}: {
-  r: {
-    market: string;
-    total_predictions: number;
-    correct_predictions: number;
-    accuracy_pct: number;
-    avg_edge: number;
-    avg_confidence: number;
-    total_staked?: number;
-    total_returned?: number;
-    profit_loss?: number;
-    roi_pct?: number;
-  };
-  dateLabel: string;
-}) {
+function DailyRow({ r }: { r: AccuracyRow }) {
+  const tpCount = r.top_pick_count ?? 0;
+  const tpCorrect = r.top_pick_correct ?? 0;
+  const tpPct = r.top_pick_accuracy_pct ?? 0;
+  const vbCount = r.value_bet_count ?? 0;
+  const vbPct = r.value_bet_accuracy_pct ?? 0;
+
   return (
     <tr className="border-b border-brand-border/50 hover:bg-brand-surface/50 transition-colors">
-      <td className="px-6 py-3 text-sm text-gray-400">{dateLabel}</td>
-      <td className="px-6 py-3">
+      <td className="px-6 py-3 text-sm text-gray-400">{r.date}</td>
+      <td className="px-4 py-3">
         <span
           className={`text-xs px-2 py-0.5 rounded-md uppercase border ${
             MARKET_COLORS[r.market] || "bg-gray-500/15 text-gray-400 border-gray-500/25"
@@ -489,26 +497,25 @@ function DailyRow({
           {r.market}
         </span>
       </td>
-      <td className="px-6 py-3 text-right font-mono text-gray-300">
-        {r.total_predictions}
+      <td className="px-4 py-3 text-right font-mono text-gray-300">
+        {tpCount}
       </td>
-      <td className="px-6 py-3 text-right font-mono text-gray-300">
-        {r.correct_predictions}
+      <td className="px-4 py-3 text-right">
+        <div className="flex items-center justify-end gap-2">
+          <span className="text-xs text-gray-500">{tpCorrect}/{tpCount}</span>
+          <span className={`font-mono text-sm ${topPickColor(r.market, tpPct)}`}>
+            {tpPct.toFixed(1)}%
+          </span>
+        </div>
       </td>
-      <td className={`px-6 py-3 text-right font-mono ${accuracyColor(r.market, r.accuracy_pct)}`}>
-        {r.accuracy_pct.toFixed(1)}%
+      <td className="px-4 py-3 text-right font-mono text-gray-300 hidden sm:table-cell">
+        {vbCount}
       </td>
-      <td className="px-6 py-3 text-right font-mono text-gray-300">
-        {(r.avg_edge * 100).toFixed(2)}%
+      <td className={`px-4 py-3 text-right font-mono hidden sm:table-cell ${vbCount > 0 ? vbColor(vbPct) : "text-gray-600"}`}>
+        {vbCount > 0 ? `${vbPct.toFixed(1)}%` : "--"}
       </td>
-      <td className={`px-6 py-3 text-right font-mono ${confidenceColor(r.avg_confidence)}`}>
-        {r.avg_confidence}
-      </td>
-      <td className="px-4 py-3 text-right font-mono text-gray-400 text-sm hidden lg:table-cell">
-        {(r.total_staked ?? 0).toFixed(1)}u
-      </td>
-      <td className="px-4 py-3 text-right font-mono text-gray-400 text-sm hidden lg:table-cell">
-        {(r.total_returned ?? 0).toFixed(1)}u
+      <td className="px-4 py-3 text-right font-mono text-gray-300">
+        {((r.avg_edge ?? 0) * 100).toFixed(2)}%
       </td>
       <td className={`px-6 py-3 text-right font-mono ${plColor(r.profit_loss ?? 0)}`}>
         {formatPL(r.profit_loss ?? 0)}
@@ -521,18 +528,20 @@ function DailyRow({
   );
 }
 
-/* ─── SummaryCard (matches Dashboard pattern) ─── */
+/* ─── SummaryCard ─── */
 
 function SummaryCard({
   label,
   value,
   suffix,
+  subtext,
   accent,
   icon,
 }: {
   label: string;
   value: number | string;
   suffix?: string;
+  subtext?: string;
   accent?: "green" | "amber" | "red";
   icon: string;
 }) {
@@ -573,6 +582,9 @@ function SummaryCard({
         {value}
         {suffix}
       </div>
+      {subtext && (
+        <div className="text-xs text-gray-500 mt-1">{subtext}</div>
+      )}
     </div>
   );
 }

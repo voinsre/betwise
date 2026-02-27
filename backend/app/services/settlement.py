@@ -189,11 +189,16 @@ async def settle_fixtures_for_date(
     market_stats: dict[str, dict] = defaultdict(lambda: {
         "total": 0, "correct": 0, "edges": [], "confidences": [],
         "staked": 0.0, "returned": 0.0,
+        "top_pick_count": 0, "top_pick_correct": 0,
+        "value_bet_count": 0, "value_bet_correct": 0,
     })
 
     settled_count = 0
     correct_count = 0
     pred_updates: list[dict] = []  # [{pred_id, is_correct_val}, ...]
+
+    # Group evaluated predictions by (fixture_id, market) for top-pick analysis
+    fixture_market_groups: dict[tuple[int, str], list[tuple[Prediction, bool]]] = defaultdict(list)
 
     for pred in predictions:
         fixture = fixture_map.get(pred.fixture_id)
@@ -223,6 +228,26 @@ async def settle_fixtures_for_date(
         if is_correct:
             correct_count += 1
             stats["correct"] += 1
+
+        # Collect for top-pick and value-bet accuracy analysis
+        fixture_market_groups[(pred.fixture_id, pred.market)].append((pred, is_correct))
+
+    # Compute top-pick and value-bet accuracy per market
+    for (fixture_id, market), group in fixture_market_groups.items():
+        stats = market_stats[market]
+
+        # Top pick: selection with highest blended_probability in this group
+        top_pred, top_correct = max(group, key=lambda x: x[0].blended_probability)
+        stats["top_pick_count"] += 1
+        if top_correct:
+            stats["top_pick_correct"] += 1
+
+        # Value bets: count is_value_bet=true and their correctness
+        for pred, is_correct in group:
+            if pred.is_value_bet:
+                stats["value_bet_count"] += 1
+                if is_correct:
+                    stats["value_bet_correct"] += 1
 
     # 6. Atomic write: update predictions + delete/rewrite accuracy rows
     logger.info("Step 4: Writing %d prediction results + accuracy for %d markets...",
@@ -256,6 +281,13 @@ async def settle_fixtures_for_date(
             pl = returned - staked
             roi = (pl / staked * 100) if staked > 0 else 0.0
 
+            tp_count = stats["top_pick_count"]
+            tp_correct = stats["top_pick_correct"]
+            tp_acc = (tp_correct / tp_count * 100) if tp_count > 0 else 0.0
+            vb_count = stats["value_bet_count"]
+            vb_correct = stats["value_bet_correct"]
+            vb_acc = (vb_correct / vb_count * 100) if vb_count > 0 else 0.0
+
             acc = ModelAccuracy(
                 date=target_date,
                 market=market,
@@ -269,6 +301,12 @@ async def settle_fixtures_for_date(
                 total_returned=round(returned, 2),
                 profit_loss=round(pl, 2),
                 roi_pct=round(roi, 2),
+                top_pick_count=tp_count,
+                top_pick_correct=tp_correct,
+                top_pick_accuracy_pct=round(tp_acc, 2),
+                value_bet_count=vb_count,
+                value_bet_correct=vb_correct,
+                value_bet_accuracy_pct=round(vb_acc, 2),
             )
             session.add(acc)
 
@@ -293,10 +331,18 @@ async def settle_fixtures_for_date(
         correct = stats["correct"]
         staked = stats["staked"]
         returned = stats["returned"]
+        tp_count = stats["top_pick_count"]
+        vb_count = stats["value_bet_count"]
         summary["per_market"][market] = {
             "total": total,
             "correct": correct,
             "accuracy_pct": round(correct / total * 100, 1) if total > 0 else 0.0,
+            "top_pick_count": tp_count,
+            "top_pick_correct": stats["top_pick_correct"],
+            "top_pick_accuracy_pct": round(stats["top_pick_correct"] / tp_count * 100, 1) if tp_count > 0 else 0.0,
+            "value_bet_count": vb_count,
+            "value_bet_correct": stats["value_bet_correct"],
+            "value_bet_accuracy_pct": round(stats["value_bet_correct"] / vb_count * 100, 1) if vb_count > 0 else 0.0,
             "value_bets_staked": round(staked, 2),
             "value_bets_returned": round(returned, 2),
             "value_bets_pl": round(returned - staked, 2),
