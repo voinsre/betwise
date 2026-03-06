@@ -176,6 +176,74 @@ export async function updateSettings(settings: {
   );
 }
 
+// --- Retrain API ---
+
+export interface RetrainLogEntry {
+  id: number;
+  started_at: string | null;
+  completed_at: string | null;
+  status: string;
+  market: string;
+  train_range: string | null;
+  val_range: string | null;
+  train_samples: number | null;
+  val_samples: number | null;
+  accuracy: number | null;
+  log_loss: number | null;
+  best_params: Record<string, number> | null;
+  duration_seconds: number | null;
+  error_message: string | null;
+  triggered_by: string;
+}
+
+export interface ModelMeta {
+  market: string;
+  retrain_date?: string;
+  train_range?: string;
+  val_range?: string;
+  train_samples?: number;
+  val_samples?: number;
+  accuracy?: number;
+  log_loss?: number;
+  best_params?: Record<string, number>;
+  feature_names?: string[];
+  model_file_exists: boolean;
+  error?: string;
+  // Legacy fields from initial training
+  train_seasons?: number[];
+  val_season?: number;
+}
+
+export async function getRetrainLogs(params?: { limit?: number; market?: string }) {
+  const searchParams = new URLSearchParams();
+  if (params?.limit !== undefined) searchParams.set("limit", String(params.limit));
+  if (params?.market) searchParams.set("market", params.market);
+  const qs = searchParams.toString();
+  const path = `/api/admin/retrain-logs${qs ? `?${qs}` : ""}`;
+
+  return fetchApi<{ logs: RetrainLogEntry[]; count: number }>(path, { auth: true });
+}
+
+export async function getModelStatus() {
+  return fetchApi<{ models: Record<string, ModelMeta> }>("/api/admin/model-status", {
+    auth: true,
+  });
+}
+
+export async function triggerRetrain() {
+  return fetchApi<{ status: string; message: string }>("/api/admin/retrain", {
+    method: "POST",
+    auth: true,
+  });
+}
+
+export async function backfillRetrainLogs() {
+  return fetchApi<{ status: string; inserted?: number; message?: string }>(
+    "/api/admin/retrain-backfill",
+    { method: "POST", auth: true }
+  );
+}
+
 export async function getValueBets(dateStr: string) {
   return fetchApi<{
     date: string;

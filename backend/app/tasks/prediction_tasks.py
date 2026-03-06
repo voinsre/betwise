@@ -80,7 +80,7 @@ async def _retrain_ml_model():
     try:
         from app.services.retrain import retrain_all_models
 
-        results = await retrain_all_models(session_factory)
+        results = await retrain_all_models(session_factory, triggered_by="celery_beat")
 
         if "error" in results:
             logger.warning("Retrain skipped: %s", results["error"])

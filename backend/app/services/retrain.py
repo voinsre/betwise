@@ -12,7 +12,7 @@ import logging
 import os
 import shutil
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -23,6 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.fixture import Fixture
+from app.models.retrain_log import RetrainLog
 from app.services.ml_model import FEATURE_NAMES, MLPredictor
 
 logger = logging.getLogger(__name__)
@@ -234,12 +235,17 @@ def evaluate_model(
 
 
 def _backup_model(market: str) -> None:
-    """Back up existing model file before overwriting."""
+    """Back up existing model and meta files before overwriting."""
     model_path = MODEL_DIR / f"{market}_model.json"
     if model_path.exists():
         backup_path = MODEL_DIR / f"{market}_model_prev.json"
         shutil.copy2(model_path, backup_path)
         logger.info("Backed up %s → %s", model_path.name, backup_path.name)
+
+    meta_path = MODEL_DIR / f"{market}_meta.json"
+    if meta_path.exists():
+        meta_backup = MODEL_DIR / f"{market}_prev_meta.json"
+        shutil.copy2(meta_path, meta_backup)
 
 
 def _save_model(model: xgb.XGBClassifier, market: str, metrics: dict,
@@ -275,9 +281,13 @@ def _save_model(model: xgb.XGBClassifier, market: str, metrics: dict,
                 model_path.name, metrics["accuracy"] * 100, metrics["log_loss"])
 
 
-async def retrain_all_models(session_factory: async_sessionmaker) -> dict:
+async def retrain_all_models(
+    session_factory: async_sessionmaker,
+    triggered_by: str = "celery_beat",
+) -> dict:
     """
     Full retrain pipeline with rolling data window.
+    Persists retrain logs to DB for each market.
 
     Returns dict of {market: {accuracy, log_loss, train_samples, val_samples}}
     or {"error": "..."} if insufficient data.
@@ -304,12 +314,15 @@ async def retrain_all_models(session_factory: async_sessionmaker) -> dict:
         msg = (f"Insufficient training data: {len(train_fixtures)} fixtures "
                f"(need {MIN_TRAIN_FIXTURES}). Skipping retrain.")
         logger.warning(msg)
+        # Log skip to DB
+        await _log_retrain_skip(session_factory, msg, triggered_by)
         return {"error": msg}
 
     if len(val_fixtures) < MIN_VAL_FIXTURES:
         msg = (f"Insufficient validation data: {len(val_fixtures)} fixtures "
                f"(need {MIN_VAL_FIXTURES}). Skipping retrain.")
         logger.warning(msg)
+        await _log_retrain_skip(session_factory, msg, triggered_by)
         return {"error": msg}
 
     # Build features
@@ -330,11 +343,13 @@ async def retrain_all_models(session_factory: async_sessionmaker) -> dict:
     if len(X_train_all) == 0 or len(X_val_all) == 0:
         msg = "No valid feature vectors built. Skipping retrain."
         logger.error(msg)
+        await _log_retrain_skip(session_factory, msg, triggered_by)
         return {"error": msg}
 
     # Train each market
     results = {}
     succeeded = 0
+    run_start = datetime.now(timezone.utc)
 
     for market, cfg in MARKETS.items():
         logger.info("Training market: %s", market.upper())
@@ -346,12 +361,18 @@ async def retrain_all_models(session_factory: async_sessionmaker) -> dict:
             logger.warning("Market %s: insufficient data (train=%d, val=%d), skipping",
                            market, len(X_train), len(X_val))
             results[market] = {"error": "insufficient data"}
+            await _log_retrain_market(
+                session_factory, market=market, status="skipped",
+                started_at=run_start, train_range=train_range, val_range=val_range,
+                error_message=f"Insufficient data: train={len(X_train)}, val={len(X_val)}",
+                triggered_by=triggered_by,
+            )
             continue
 
+        market_t0 = time.time()
         try:
-            t0 = time.time()
             model = train_model_optuna(X_train, y_train, X_val, y_val, market)
-            train_dur = time.time() - t0
+            train_dur = time.time() - market_t0
             logger.info("Market %s trained in %.1fs (%d trials)", market, train_dur, OPTUNA_TRIALS)
 
             metrics = evaluate_model(model, X_val, y_val, market)
@@ -362,6 +383,12 @@ async def retrain_all_models(session_factory: async_sessionmaker) -> dict:
                         train_samples=len(X_train), val_samples=len(X_val),
                         train_range=train_range, val_range=val_range)
 
+            best_params_dict = {
+                k: v for k, v in model.get_params().items()
+                if k in ["n_estimators", "max_depth", "learning_rate",
+                          "subsample", "colsample_bytree", "min_child_weight"]
+            }
+
             results[market] = {
                 "accuracy": round(metrics["accuracy"], 4),
                 "log_loss": round(metrics["log_loss"], 4),
@@ -370,11 +397,95 @@ async def retrain_all_models(session_factory: async_sessionmaker) -> dict:
             }
             succeeded += 1
 
+            await _log_retrain_market(
+                session_factory, market=market, status="success",
+                started_at=run_start, train_range=train_range, val_range=val_range,
+                train_samples=len(X_train), val_samples=len(X_val),
+                accuracy=round(metrics["accuracy"], 4),
+                log_loss_val=round(metrics["log_loss"], 4),
+                best_params=json.dumps(best_params_dict),
+                duration_seconds=round(train_dur, 1),
+                triggered_by=triggered_by,
+            )
+
         except Exception as e:
+            train_dur = time.time() - market_t0
             logger.error("Market %s training failed: %s", market, e, exc_info=True)
             results[market] = {"error": str(e)}
+            await _log_retrain_market(
+                session_factory, market=market, status="failed",
+                started_at=run_start, train_range=train_range, val_range=val_range,
+                train_samples=len(X_train), val_samples=len(X_val),
+                error_message=str(e), duration_seconds=round(train_dur, 1),
+                triggered_by=triggered_by,
+            )
 
     logger.info("Retrain complete: %d/%d markets succeeded. Results: %s",
                 succeeded, len(MARKETS), results)
 
     return results
+
+
+async def _log_retrain_skip(
+    session_factory: async_sessionmaker,
+    message: str,
+    triggered_by: str,
+) -> None:
+    """Log a skipped retrain run (insufficient data at global level)."""
+    now = datetime.now(timezone.utc)
+    try:
+        async with session_factory() as session:
+            for market in MARKETS:
+                session.add(RetrainLog(
+                    started_at=now,
+                    completed_at=now,
+                    status="skipped",
+                    market=market,
+                    error_message=message,
+                    triggered_by=triggered_by,
+                ))
+            await session.commit()
+    except Exception as e:
+        logger.error("Failed to log retrain skip: %s", e)
+
+
+async def _log_retrain_market(
+    session_factory: async_sessionmaker,
+    *,
+    market: str,
+    status: str,
+    started_at: datetime,
+    train_range: str,
+    val_range: str,
+    train_samples: int | None = None,
+    val_samples: int | None = None,
+    accuracy: float | None = None,
+    log_loss_val: float | None = None,
+    best_params: str | None = None,
+    duration_seconds: float | None = None,
+    error_message: str | None = None,
+    triggered_by: str = "celery_beat",
+) -> None:
+    """Persist a single market retrain result to the DB."""
+    now = datetime.now(timezone.utc)
+    try:
+        async with session_factory() as session:
+            session.add(RetrainLog(
+                started_at=started_at,
+                completed_at=now,
+                status=status,
+                market=market,
+                train_range=train_range,
+                val_range=val_range,
+                train_samples=train_samples,
+                val_samples=val_samples,
+                accuracy=accuracy,
+                log_loss=log_loss_val,
+                best_params=best_params,
+                duration_seconds=duration_seconds,
+                error_message=error_message,
+                triggered_by=triggered_by,
+            ))
+            await session.commit()
+    except Exception as e:
+        logger.error("Failed to log retrain result for %s: %s", market, e)

@@ -1,7 +1,9 @@
 import asyncio
 import hmac
+import json
 import logging
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import jwt
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
@@ -18,6 +20,7 @@ from app.models.fixture import Fixture
 from app.models.league import League
 from app.models.model_accuracy import ModelAccuracy
 from app.models.prediction import Prediction
+from app.models.retrain_log import RetrainLog
 from app.models.team_last20 import TeamLast20
 from app.services.api_football import APIFootballClient
 from app.services.data_sync import DataSyncService
@@ -293,11 +296,174 @@ async def trigger_backfill(league_id: int, season: int, request: Request, _admin
     return {"status": "queued", "league_id": league_id, "season": season}
 
 
+@router.get("/retrain-logs")
+async def get_retrain_logs(
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
+    limit: int = Query(50, ge=1, le=200),
+    market: str | None = Query(None),
+):
+    """Return retrain history from DB."""
+    q = select(RetrainLog).order_by(RetrainLog.started_at.desc())
+    if market:
+        q = q.where(RetrainLog.market == market)
+    q = q.limit(limit)
+
+    result = await db.execute(q)
+    rows = result.scalars().all()
+
+    items = []
+    for r in rows:
+        items.append({
+            "id": r.id,
+            "started_at": r.started_at.isoformat() if r.started_at else None,
+            "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+            "status": r.status,
+            "market": r.market,
+            "train_range": r.train_range,
+            "val_range": r.val_range,
+            "train_samples": r.train_samples,
+            "val_samples": r.val_samples,
+            "accuracy": r.accuracy,
+            "log_loss": r.log_loss,
+            "best_params": json.loads(r.best_params) if r.best_params else None,
+            "duration_seconds": r.duration_seconds,
+            "error_message": r.error_message,
+            "triggered_by": r.triggered_by,
+        })
+
+    return {"logs": items, "count": len(items)}
+
+
+@router.get("/model-status")
+async def get_model_status(_admin: dict = Depends(get_current_admin)):
+    """Current model info from disk meta files."""
+    from app.services.retrain import MODEL_DIR
+
+    models = {}
+    for market in ["1x2", "ou25", "btts", "htft"]:
+        meta_path = MODEL_DIR / f"{market}_meta.json"
+        model_path = MODEL_DIR / f"{market}_model.json"
+        if meta_path.exists():
+            with open(meta_path) as f:
+                meta = json.load(f)
+            meta["model_file_exists"] = model_path.exists()
+            models[market] = meta
+        else:
+            models[market] = {
+                "market": market,
+                "model_file_exists": model_path.exists(),
+                "error": "No metadata file found",
+            }
+
+    return {"models": models}
+
+
+async def _run_retrain():
+    """Run ML retrain in background."""
+    engine = create_async_engine(settings.DATABASE_URL, echo=False)
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    try:
+        from app.services.retrain import retrain_all_models
+        results = await retrain_all_models(session_factory, triggered_by="manual")
+        logger.info("Manual retrain complete: %s", results)
+    except Exception:
+        logger.exception("Manual retrain FAILED")
+    finally:
+        await engine.dispose()
+
+
 @router.post("/retrain")
 @limiter.limit("1/hour")
-async def trigger_retrain(request: Request, _admin: dict = Depends(get_current_admin)):
-    """Trigger ML retrain (placeholder — needs Celery)."""
-    return {"status": "queued", "message": "ML retrain task queued"}
+async def trigger_retrain(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    _admin: dict = Depends(get_current_admin),
+):
+    """Trigger ML retrain. Runs in background."""
+    background_tasks.add_task(_run_retrain)
+    return {"status": "started", "message": "ML retrain running in background — check retrain logs for progress"}
+
+
+@router.post("/retrain-backfill")
+@limiter.limit("5/hour")
+async def backfill_retrain_logs(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
+):
+    """One-time backfill: read meta files from disk and insert retrain history rows."""
+    from app.services.retrain import MODEL_DIR
+
+    # Check if we already have logs — avoid duplicate backfill
+    existing = await db.execute(
+        select(func.count(RetrainLog.id))
+    )
+    if (existing.scalar() or 0) > 0:
+        return {"status": "skipped", "message": "Retrain logs already exist — skipping backfill"}
+
+    inserted = 0
+    for market in ["1x2", "ou25", "btts", "htft"]:
+        # Try current meta file
+        meta_path = MODEL_DIR / f"{market}_meta.json"
+        if meta_path.exists():
+            with open(meta_path) as f:
+                meta = json.load(f)
+            retrain_date = meta.get("retrain_date")
+            if retrain_date:
+                started_at = datetime.fromisoformat(f"{retrain_date}T03:00:00+00:00")
+            else:
+                # Legacy format — use file modification time
+                import os
+                mtime = os.path.getmtime(meta_path)
+                started_at = datetime.fromtimestamp(mtime, tz=timezone.utc)
+
+            best_params = meta.get("best_params")
+
+            db.add(RetrainLog(
+                started_at=started_at,
+                completed_at=started_at + timedelta(minutes=5),
+                status="success",
+                market=market,
+                train_range=meta.get("train_range"),
+                val_range=meta.get("val_range"),
+                train_samples=meta.get("train_samples"),
+                val_samples=meta.get("val_samples"),
+                accuracy=meta.get("accuracy"),
+                log_loss=meta.get("log_loss"),
+                best_params=json.dumps(best_params) if best_params else None,
+                triggered_by="celery_beat",
+            ))
+            inserted += 1
+
+        # Try prev meta file (from backed-up model)
+        prev_meta_path = MODEL_DIR / f"{market}_prev_meta.json"
+        if prev_meta_path.exists():
+            with open(prev_meta_path) as f:
+                prev_meta = json.load(f)
+            prev_date = prev_meta.get("retrain_date")
+            if prev_date:
+                prev_started = datetime.fromisoformat(f"{prev_date}T03:00:00+00:00")
+                prev_params = prev_meta.get("best_params")
+                db.add(RetrainLog(
+                    started_at=prev_started,
+                    completed_at=prev_started + timedelta(minutes=5),
+                    status="success",
+                    market=market,
+                    train_range=prev_meta.get("train_range"),
+                    val_range=prev_meta.get("val_range"),
+                    train_samples=prev_meta.get("train_samples"),
+                    val_samples=prev_meta.get("val_samples"),
+                    accuracy=prev_meta.get("accuracy"),
+                    log_loss=prev_meta.get("log_loss"),
+                    best_params=json.dumps(prev_params) if prev_params else None,
+                    triggered_by="celery_beat",
+                ))
+                inserted += 1
+
+    await db.commit()
+    return {"status": "ok", "inserted": inserted}
 
 
 async def _run_pipeline():

@@ -6,6 +6,7 @@ from app.models.league import League
 from app.models.model_accuracy import ModelAccuracy
 from app.models.odds import Odds
 from app.models.prediction import Prediction
+from app.models.retrain_log import RetrainLog
 from app.models.standing import Standing
 from app.models.team import Team
 from app.models.team_last20 import TeamLast20
@@ -24,4 +25,5 @@ __all__ = [
     "Prediction",
     "Ticket",
     "ModelAccuracy",
+    "RetrainLog",
 ]
