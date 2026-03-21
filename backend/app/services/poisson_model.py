@@ -1,7 +1,7 @@
-"""Poisson distribution prediction model — Phase 3.
+"""Poisson distribution prediction model.
 
-Calculates match outcome probabilities across 7 markets using a
-bivariate Poisson model with recency-weighted team form data.
+Calculates match outcome probabilities across 4 markets (dc, ou15, ou25, ou35)
+using a bivariate Poisson model with recency-weighted team form data.
 """
 
 import logging
@@ -94,12 +94,10 @@ class PoissonPredictor:
             "league_avg_goals": league_stats["avg_goals_per_game"],
             "matrix": matrix,
             "markets": {
-                "1x2": self._calc_1x2(matrix),
-                "ou25": self._calc_over_under(matrix, 2.5),
-                "btts": self._calc_btts(matrix),
                 "dc": self._calc_double_chance(matrix),
-                "htft": self._calc_htft(lambda_home, lambda_away),
-                "combo": self._calc_best_combos(matrix, lambda_home, lambda_away),
+                "ou15": self._calc_over_under(matrix, 1.5),
+                "ou25": self._calc_over_under(matrix, 2.5),
+                "ou35": self._calc_over_under(matrix, 3.5),
             },
         }
 
@@ -343,22 +341,8 @@ class PoissonPredictor:
         )
         over = 1.0 - under
         return {
-            "Over 2.5": round(float(over), 6),
-            "Under 2.5": round(float(under), 6),
-        }
-
-    @staticmethod
-    def _calc_btts(matrix: np.ndarray) -> dict[str, float]:
-        """Both Teams To Score probabilities."""
-        n = matrix.shape[0]
-        home_zero = sum(matrix[0][j] for j in range(n))
-        away_zero = sum(matrix[i][0] for i in range(n))
-        both_zero = matrix[0][0]
-        btts_no = home_zero + away_zero - both_zero
-        btts_yes = 1.0 - btts_no
-        return {
-            "Yes": round(float(btts_yes), 6),
-            "No": round(float(btts_no), 6),
+            f"Over {line}": round(float(over), 6),
+            f"Under {line}": round(float(under), 6),
         }
 
     @staticmethod
@@ -371,138 +355,3 @@ class PoissonPredictor:
             "X2": round(p["Draw"] + p["Away"], 6),
         }
 
-    @staticmethod
-    def _calc_htft(lambda_home: float, lambda_away: float) -> dict[str, float]:
-        """
-        Half-time / Full-time probabilities via dual Poisson.
-        Research: ~43% of goals scored in first half, ~57% second half.
-        """
-        lh_ht = lambda_home * 0.43
-        la_ht = lambda_away * 0.43
-        lh_2h = lambda_home * 0.57
-        la_2h = lambda_away * 0.57
-
-        results = {}
-        for ht_label, ht_cond in [("1", "home"), ("X", "draw"), ("2", "away")]:
-            for ft_label, ft_cond in [("1", "home"), ("X", "draw"), ("2", "away")]:
-                prob = PoissonPredictor._calc_htft_joint(
-                    lh_ht, la_ht, lh_2h, la_2h, ht_cond, ft_cond
-                )
-                results[f"{ht_label}/{ft_label}"] = round(prob, 6)
-        return results
-
-    @staticmethod
-    def _calc_htft_joint(
-        lh_ht: float, la_ht: float, lh_2h: float, la_2h: float,
-        ht_result: str, ft_result: str,
-    ) -> float:
-        """P(HT result AND FT result) via independent Poisson per half."""
-        max_g = 5  # 0–4 goals per team per half
-        total = 0.0
-        for h1 in range(max_g):
-            for a1 in range(max_g):
-                # Check half-time condition
-                if ht_result == "home" and h1 <= a1:
-                    continue
-                if ht_result == "draw" and h1 != a1:
-                    continue
-                if ht_result == "away" and h1 >= a1:
-                    continue
-
-                p_ht = poisson.pmf(h1, lh_ht) * poisson.pmf(a1, la_ht)
-
-                for h2 in range(max_g):
-                    for a2 in range(max_g):
-                        ft_home = h1 + h2
-                        ft_away = a1 + a2
-                        # Check full-time condition
-                        if ft_result == "home" and ft_home <= ft_away:
-                            continue
-                        if ft_result == "draw" and ft_home != ft_away:
-                            continue
-                        if ft_result == "away" and ft_home >= ft_away:
-                            continue
-
-                        p_2h = poisson.pmf(h2, lh_2h) * poisson.pmf(a2, la_2h)
-                        total += p_ht * p_2h
-        return total
-
-    @staticmethod
-    def _calc_best_combos(
-        matrix: np.ndarray, lambda_home: float, lambda_away: float
-    ) -> dict[str, float]:
-        """
-        Calculate combo bet probabilities (result+goals, result+BTTS, etc.).
-        Returns top 5 by probability.
-        """
-        n = matrix.shape[0]
-        combos: dict[str, float] = {}
-
-        # ── Result + Over 2.5 ─────────────────────────────────
-        for result, label in [("home", "Home"), ("draw", "Draw"), ("away", "Away")]:
-            prob = sum(
-                matrix[i][j]
-                for i in range(n) for j in range(n)
-                if (i + j) > 2
-                and (
-                    (result == "home" and i > j)
-                    or (result == "draw" and i == j)
-                    or (result == "away" and i < j)
-                )
-            )
-            combos[f"{label} & Over 2.5"] = prob
-
-        # ── Result + BTTS ─────────────────────────────────────
-        for result, label in [("home", "Home"), ("draw", "Draw"), ("away", "Away")]:
-            prob = sum(
-                matrix[i][j]
-                for i in range(n) for j in range(n)
-                if i > 0 and j > 0
-                and (
-                    (result == "home" and i > j)
-                    or (result == "draw" and i == j)
-                    or (result == "away" and i < j)
-                )
-            )
-            combos[f"{label} & BTTS"] = prob
-
-        # ── Result + 3+ total goals ───────────────────────────
-        for result, label in [("home", "Home"), ("draw", "Draw"), ("away", "Away")]:
-            prob = sum(
-                matrix[i][j]
-                for i in range(n) for j in range(n)
-                if (i + j) >= 3
-                and (
-                    (result == "home" and i > j)
-                    or (result == "draw" and i == j)
-                    or (result == "away" and i < j)
-                )
-            )
-            combos[f"{label} & 3+ Goals"] = prob
-
-        # ── BTTS + Over 2.5 ──────────────────────────────────
-        combos["BTTS & Over 2.5"] = sum(
-            matrix[i][j]
-            for i in range(n) for j in range(n)
-            if i > 0 and j > 0 and (i + j) > 2
-        )
-
-        # ── Double Chance + Over 1.5 ─────────────────────────
-        dc_checks: dict[str, callable] = {
-            "1X": lambda i, j: i >= j,
-            "X2": lambda i, j: i <= j,
-            "12": lambda i, j: i != j,
-        }
-        for dc, check in dc_checks.items():
-            prob = sum(
-                matrix[i][j]
-                for i in range(n) for j in range(n)
-                if check(i, j) and (i + j) > 1
-            )
-            combos[f"{dc} & Over 1.5"] = prob
-
-        # Sort by probability descending, return top 5
-        sorted_combos = dict(
-            sorted(combos.items(), key=lambda x: x[1], reverse=True)[:5]
-        )
-        return {k: round(float(v), 6) for k, v in sorted_combos.items()}
