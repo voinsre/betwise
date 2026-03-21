@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     # Google Gemini
     GEMINI_API_KEY: str = ""
 
+    # OddsPapi
+    ODDSPAPI_API_KEY: str = ""
+
     # Auth
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD: str = "changeme"
