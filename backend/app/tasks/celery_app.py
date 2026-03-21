@@ -67,4 +67,14 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.prediction_tasks.retrain_ml_model",
         "schedule": crontab(hour=3, minute=0, day_of_week="monday"),
     },
+    # ── Pinnacle odds (OddsPapi) ───────────────────────────────────
+    "sync-pinnacle-odds": {
+        "task": "app.tasks.sync_tasks.sync_pinnacle_odds_task",
+        "schedule": crontab(hour=7, minute=0),
+    },
+    # ── Weekly Elo ratings ─────────────────────────────────────────
+    "update-elo-ratings": {
+        "task": "app.tasks.sync_tasks.update_elo_ratings_task",
+        "schedule": crontab(hour=2, minute=0, day_of_week="monday"),
+    },
 }

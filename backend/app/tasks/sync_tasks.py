@@ -185,3 +185,39 @@ async def _backfill_historical(league_id: int, season: int):
         logger.info("Starting backfill for league %d season %d", league_id, season)
         count = await sync.backfill_league(league_id, season)
         logger.info("Backfill complete: %d fixtures for league %d season %d", count, league_id, season)
+
+
+# ── sync_pinnacle_odds_task ───────────────────────────────────
+
+@celery_app.task
+def sync_pinnacle_odds_task():
+    """Sync Pinnacle odds via OddsPapi for today's NS fixtures."""
+    asyncio.run(_sync_pinnacle_odds_task())
+
+
+async def _sync_pinnacle_odds_task():
+    engine = create_async_engine(settings.DATABASE_URL, echo=False)
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    try:
+        from app.services.pinnacle_sync import sync_pinnacle_odds
+
+        async with session_factory() as session:
+            await sync_pinnacle_odds(session)
+        logger.info("Pinnacle odds sync complete")
+    except Exception as exc:
+        logger.error("Pinnacle odds sync failed: %s", exc, exc_info=True)
+    finally:
+        await engine.dispose()
+
+
+# ── update_elo_ratings_task ───────────────────────────────────
+
+@celery_app.task
+def update_elo_ratings_task():
+    """Weekly Elo ratings update (stub — implemented in Phase 11)."""
+    asyncio.run(_update_elo_ratings_task())
+
+
+async def _update_elo_ratings_task():
+    logger.info("Elo ratings update: stub — will be implemented in Phase 11")
