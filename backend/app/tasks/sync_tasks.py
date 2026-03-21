@@ -220,4 +220,16 @@ def update_elo_ratings_task():
 
 
 async def _update_elo_ratings_task():
-    logger.info("Elo ratings update: stub — will be implemented in Phase 11")
+    engine = create_async_engine(settings.DATABASE_URL, echo=False)
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    try:
+        from app.services.elo_service import sync_elo_ratings
+
+        async with session_factory() as session:
+            count = await sync_elo_ratings(session)
+        logger.info("Elo ratings update complete: %d ratings synced", count)
+    except Exception as exc:
+        logger.error("Elo ratings update failed: %s", exc, exc_info=True)
+    finally:
+        await engine.dispose()

@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.elo_ratings import EloRating
 from app.models.fixture import Fixture
+from app.models.source_mapping import TeamSourceMapping
 from app.models.head_to_head import HeadToHead
 from app.models.injury import Injury
 from app.models.odds import Odds
@@ -210,10 +211,31 @@ async def _situational_features(f, session, fixture, home_10, away_5):
 
 
 async def _elo_features(f, session, fixture, before_date):
-    """3 Elo features — returns None until ClubElo sync populates elo_ratings."""
-    f["elo_home"] = None
-    f["elo_away"] = None
-    f["elo_gap"] = None
+    """3 Elo features from ClubElo ratings via team_source_mappings."""
+
+    async def _get_elo(team_id):
+        # Look up the ClubElo name via TeamSourceMapping
+        mapping = (await session.execute(
+            select(TeamSourceMapping.clubelo_name)
+            .where(TeamSourceMapping.api_football_team_id == team_id)
+        )).scalar_one_or_none()
+        if not mapping:
+            return None
+        # Get most recent Elo before the fixture date
+        elo = (await session.execute(
+            select(EloRating.elo)
+            .where(EloRating.team_name == mapping, EloRating.date < before_date)
+            .order_by(EloRating.date.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+        return elo
+
+    home_elo = await _get_elo(fixture.home_team_id)
+    away_elo = await _get_elo(fixture.away_team_id)
+
+    f["elo_home"] = home_elo
+    f["elo_away"] = away_elo
+    f["elo_gap"] = (home_elo - away_elo) if (home_elo is not None and away_elo is not None) else None
 
 
 async def _pinnacle_features(f, session, fixture):
