@@ -57,32 +57,29 @@ type RangeKey = "7d" | "30d" | "90d" | "all";
 
 /* ─── Constants ─── */
 
-const MARKETS = ["1x2", "ou25", "btts", "dc", "htft"];
+const MARKETS = ["dc", "ou15", "ou25", "ou35"];
 
 const MARKET_COLORS: Record<string, string> = {
-  "1x2": "bg-blue-500/15 text-blue-400 border-blue-500/25",
-  ou25: "bg-purple-500/15 text-purple-400 border-purple-500/25",
-  btts: "bg-pink-500/15 text-pink-400 border-pink-500/25",
-  dc: "bg-cyan-500/15 text-cyan-400 border-cyan-500/25",
-  htft: "bg-orange-500/15 text-orange-400 border-orange-500/25",
+  dc: "bg-blue-500/15 text-blue-400 border-blue-500/25",
+  ou15: "bg-emerald-500/15 text-emerald-400 border-emerald-500/25",
+  ou25: "bg-amber-500/15 text-amber-400 border-amber-500/25",
+  ou35: "bg-red-500/15 text-red-400 border-red-500/25",
 };
 
 const MARKET_BAR_COLORS: Record<string, string> = {
-  "1x2": "bg-blue-500",
-  ou25: "bg-purple-500",
-  btts: "bg-pink-500",
-  dc: "bg-cyan-500",
-  htft: "bg-orange-500",
+  dc: "bg-blue-500",
+  ou15: "bg-emerald-500",
+  ou25: "bg-amber-500",
+  ou35: "bg-red-500",
 };
 
 // Market-aware top-pick accuracy thresholds: [green_min, amber_min]
-// Based on random baselines: 1x2=33%, ou25/btts=50%, dc=66%, htft=11%
+// Based on random baselines: dc=66%, ou15/ou25=50%, ou35=50%
 const TOP_PICK_THRESHOLDS: Record<string, [number, number]> = {
-  "1x2": [45, 33],
-  ou25: [60, 50],
-  btts: [60, 50],
-  dc: [75, 66],
-  htft: [20, 11],
+  dc: [80, 70],
+  ou15: [75, 65],
+  ou25: [72, 62],
+  ou35: [45, 35],
 };
 
 const RANGE_LABELS: Record<RangeKey, string> = {

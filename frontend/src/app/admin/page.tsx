@@ -3,13 +3,12 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { getDashboard, getValueBets, getPredictions } from "@/lib/api";
 
-const ALL_MARKETS = ["1x2", "ou25", "btts", "dc", "htft"] as const;
+const ALL_MARKETS = ["dc", "ou15", "ou25", "ou35"] as const;
 const MARKET_LABELS: Record<string, string> = {
-  "1x2": "1X2",
-  ou25: "O/U 2.5",
-  btts: "BTTS",
   dc: "DC",
-  htft: "HT/FT",
+  ou15: "O/U 1.5",
+  ou25: "O/U 2.5",
+  ou35: "O/U 3.5",
 };
 
 interface DashboardData {

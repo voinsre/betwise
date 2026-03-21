@@ -5,11 +5,10 @@ import ValueBetCard, { type ValueBet } from "./ValueBetCard";
 
 const MARKET_TABS = [
   { key: "all", label: "All" },
-  { key: "ou25", label: "O/U 2.5" },
-  { key: "btts", label: "BTTS" },
-  { key: "1x2", label: "1X2" },
   { key: "dc", label: "DC" },
-  { key: "htft", label: "HT/FT" },
+  { key: "ou15", label: "O/U 1.5" },
+  { key: "ou25", label: "O/U 2.5" },
+  { key: "ou35", label: "O/U 3.5" },
 ];
 
 const SORT_OPTIONS = [

@@ -26,11 +26,10 @@ interface TicketData {
 }
 
 const MARKET_COLORS: Record<string, string> = {
-  "1x2": "bg-blue-500/15 text-blue-400",
-  ou25: "bg-purple-500/15 text-purple-400",
-  btts: "bg-pink-500/15 text-pink-400",
-  dc: "bg-cyan-500/15 text-cyan-400",
-  htft: "bg-orange-500/15 text-orange-400",
+  dc: "bg-blue-500/15 text-blue-400",
+  ou15: "bg-emerald-500/15 text-emerald-400",
+  ou25: "bg-amber-500/15 text-amber-400",
+  ou35: "bg-red-500/15 text-red-400",
 };
 
 function stars(confidence: number): string {

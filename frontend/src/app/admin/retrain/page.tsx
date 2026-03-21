@@ -12,13 +12,12 @@ import {
 
 /* ─── Constants ─── */
 
-const MARKETS = ["1x2", "ou25", "btts", "htft"];
+const MARKETS = ["ou15", "ou25", "ou35"];
 
 const MARKET_COLORS: Record<string, string> = {
-  "1x2": "bg-blue-500/15 text-blue-400 border-blue-500/25",
-  ou25: "bg-purple-500/15 text-purple-400 border-purple-500/25",
-  btts: "bg-pink-500/15 text-pink-400 border-pink-500/25",
-  htft: "bg-orange-500/15 text-orange-400 border-orange-500/25",
+  ou15: "bg-emerald-500/15 text-emerald-400 border-emerald-500/25",
+  ou25: "bg-amber-500/15 text-amber-400 border-amber-500/25",
+  ou35: "bg-red-500/15 text-red-400 border-red-500/25",
 };
 
 const STATUS_STYLES: Record<string, string> = {
@@ -191,7 +190,7 @@ export default function RetrainPage() {
       )}
 
       {/* Current Model Status Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
         {MARKETS.map((market) => {
           const meta = models[market];
           const retrainDate = meta?.retrain_date;
