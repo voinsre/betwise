@@ -80,12 +80,26 @@ def evaluate_prediction(pred: Prediction, fixture: Fixture) -> bool | None:
             actual = "Away"
         return selection == actual
 
+    elif market == "ou15":
+        total = h_ft + a_ft
+        if selection == "Over 1.5":
+            return total > 1.5
+        elif selection == "Under 1.5":
+            return total < 1.5
+
     elif market == "ou25":
         total = h_ft + a_ft
         if selection == "Over 2.5":
             return total > 2.5
         elif selection == "Under 2.5":
             return total < 2.5
+
+    elif market == "ou35":
+        total = h_ft + a_ft
+        if selection == "Over 3.5":
+            return total > 3.5
+        elif selection == "Under 3.5":
+            return total < 3.5
 
     elif market == "btts":
         both_scored = h_ft > 0 and a_ft > 0
