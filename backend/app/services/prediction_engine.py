@@ -1,7 +1,9 @@
-"""Prediction engine orchestrator — Phase 5.
+"""Prediction engine orchestrator.
 
 Blends Poisson + XGBoost predictions, calculates confidence scores,
 detects value bets, and saves predictions to the database.
+
+Markets: dc (Poisson-only), ou15, ou25, ou35 (Poisson + XGBoost).
 """
 
 import logging
@@ -10,7 +12,6 @@ from datetime import date, datetime
 import numpy as np
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.models.fixture import Fixture
@@ -20,21 +21,26 @@ from app.models.prediction import Prediction
 from app.models.team import Team
 from app.models.team_last20 import TeamLast20
 from app.services.bankroll import BankrollManager
+from app.services.feature_engineering import compute_feature_vector
+from app.services.league_config import get_league_by_api_id, is_market_active
 from app.services.ml_model import MLPredictor
+from app.services.pinnacle_sync import get_pinnacle_odds_for_fixture, _pinnacle_key
 from app.services.poisson_model import PoissonPredictor
 
 logger = logging.getLogger(__name__)
 
 MARKETS_CONFIG = {
-    "1x2": {"labels": ["Home", "Draw", "Away"]},
-    "ou25": {"labels": ["Under 2.5", "Over 2.5"]},
-    "btts": {"labels": ["No", "Yes"]},
-    "dc": {"labels": ["1X", "12", "X2"]},
-    "htft": {"labels": ["1/1", "1/X", "1/2", "X/1", "X/X", "X/2", "2/1", "2/X", "2/2"]},
+    "dc":   {"labels": ["1X", "12", "X2"]},
+    "ou15": {"labels": ["Over 1.5", "Under 1.5"]},
+    "ou25": {"labels": ["Over 2.5", "Under 2.5"]},
+    "ou35": {"labels": ["Over 3.5", "Under 3.5"]},
 }
 
 # Markets that have trained XGBoost models
-ML_MARKETS = {"1x2", "ou25", "btts", "htft"}
+ML_MARKETS = {"ou15", "ou25", "ou35"}
+
+# Markets with Poisson probabilities only (no ML)
+POISSON_ONLY_MARKETS = {"dc"}
 
 ALPHA = 0.50  # blending weight: alpha * poisson + (1 - alpha) * ml
 
@@ -67,6 +73,13 @@ class PredictionEngine:
             logger.error("Poisson prediction failed for fixture %d: %s", fixture_id, e)
             return []
 
+        # 1b. League gating — skip fixtures not in our 25-league portfolio
+        league_id = poisson_result.get("league_id")
+        league_config = get_league_by_api_id(league_id) if league_id else None
+        if league_config is None:
+            logger.debug("Fixture %d: league %s not in portfolio, skipping", fixture_id, league_id)
+            return []
+
         # 2. ML predictions (if models loaded)
         ml_probas = {}
         if self.ml.is_ready():
@@ -74,7 +87,7 @@ class PredictionEngine:
                 fixture = await session.get(Fixture, fixture_id)
                 if fixture:
                     try:
-                        feature_vec = await self.ml.build_feature_vector(session, fixture)
+                        feature_vec = await compute_feature_vector(session, fixture, league_config)
                         for market in ML_MARKETS:
                             if market in self.ml._models:
                                 proba = self.ml._models[market].predict_proba(
@@ -84,7 +97,7 @@ class PredictionEngine:
                     except Exception as e:
                         logger.warning("ML prediction failed for fixture %d: %s", fixture_id, e)
 
-        # 3. Load odds for this fixture
+        # 3. Load odds + Pinnacle odds for this fixture
         async with self.session_factory() as session:
             fixture = await session.get(Fixture, fixture_id)
             league = await session.get(League, fixture.league_id) if fixture else None
@@ -100,6 +113,9 @@ class PredictionEngine:
                 key = (o.market, o.label)
                 if key not in best_odds or o.value > best_odds[key].value:
                     best_odds[key] = o
+
+            # Pinnacle odds for value detection
+            pinnacle_odds = await get_pinnacle_odds_for_fixture(session, fixture_id)
 
             # Count team games for data quality
             home_games_count = 0
@@ -122,18 +138,20 @@ class PredictionEngine:
             for o in odds_rows:
                 odds_by_market.setdefault(o.market, []).append(o.value)
 
-        # 4. Build predictions for all markets
+        # 4. Build predictions for active markets only
         predictions = []
         markets = poisson_result.get("markets", {})
 
-        for market, selections in markets.items():
-            if market not in MARKETS_CONFIG:
+        for market_code, selections in markets.items():
+            if market_code not in MARKETS_CONFIG:
+                continue
+            if not is_market_active(league_id, market_code):
                 continue
 
-            labels = MARKETS_CONFIG[market]["labels"]
+            labels = MARKETS_CONFIG[market_code]["labels"]
 
             # Get ML probabilities for this market if available
-            ml_proba = ml_probas.get(market)
+            ml_proba = ml_probas.get(market_code)
 
             for label in labels:
                 poisson_prob = selections.get(label, 0.0)
@@ -142,8 +160,8 @@ class PredictionEngine:
 
                 # ML probability for this selection
                 ml_prob = None
-                if ml_proba is not None and market in ML_MARKETS:
-                    idx = MARKETS_CONFIG[market]["labels"].index(label)
+                if ml_proba is not None and market_code in ML_MARKETS:
+                    idx = MARKETS_CONFIG[market_code]["labels"].index(label)
                     if idx < len(ml_proba):
                         ml_prob = float(ml_proba[idx])
 
@@ -154,7 +172,7 @@ class PredictionEngine:
                     blended = poisson_prob
 
                 # Best odds for this selection
-                odds_key = (market, label)
+                odds_key = (market_code, label)
                 if odds_key not in best_odds:
                     continue  # no odds available
 
@@ -171,20 +189,26 @@ class PredictionEngine:
                     league=league,
                     home_games=home_games_count,
                     away_games=away_games_count,
-                    odds_values=odds_by_market.get(market, []),
+                    odds_values=odds_by_market.get(market_code, []),
                 )
 
-                # Value bet flag
+                # Pinnacle edge for is_value_bet decision (sharper than soft-book edge)
+                p_key = _pinnacle_key(market_code, label)
+                pinnacle_prob = 1 / pinnacle_odds[p_key] if p_key in pinnacle_odds else None
+                pinnacle_edge = (blended - pinnacle_prob) if pinnacle_prob else None
+
+                # Value bet flag — use Pinnacle edge when available, else bookmaker edge
+                effective_edge = pinnacle_edge if pinnacle_edge is not None else edge
                 is_value = (
-                    edge > settings.MIN_EDGE
+                    (effective_edge * 100) >= league_config.min_edge_pct
+                    and confidence >= league_config.min_confidence_pct
                     and o.value >= settings.ODDS_MIN
                     and o.value <= settings.ODDS_MAX
-                    and confidence >= settings.MIN_CONFIDENCE
                 )
 
                 predictions.append(Prediction(
                     fixture_id=fixture_id,
-                    market=market,
+                    market=market_code,
                     selection=label,
                     poisson_probability=round(poisson_prob, 4),
                     ml_probability=round(ml_prob, 4) if ml_prob is not None else None,

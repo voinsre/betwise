@@ -1,7 +1,7 @@
-"""XGBoost ML model — Phase 4.
+"""XGBoost ML model.
 
 Feature engineering (32-feature vector) and prediction using trained
-XGBoost models for 1x2, ou25, btts, and htft markets.
+XGBoost models for ou15, ou25, and ou35 markets.
 """
 
 import logging
@@ -95,7 +95,7 @@ class MLPredictor:
         """Load trained XGBoost models from disk."""
         import xgboost as xgb
 
-        for market in ["1x2", "ou25", "btts", "htft"]:
+        for market in ["ou15", "ou25", "ou35"]:
             path = MODEL_DIR / f"{market}_model.json"
             if path.exists():
                 model = xgb.XGBClassifier()
@@ -113,7 +113,7 @@ class MLPredictor:
         self._league_avg_cache.clear()
         self._standings_cache.clear()
 
-    # ── Feature vector construction ────────────────────────────
+    # ── Feature vector construction (DEPRECATED — use feature_engineering.compute_feature_vector) ──
 
     async def build_feature_vector(
         self,
@@ -525,45 +525,13 @@ class MLPredictor:
     def get_labels(fixture: Fixture) -> dict:
         """
         Extract actual outcome labels from a completed fixture.
-        Returns dict with keys: 1x2, ou25, btts, htft
+        Returns dict with keys: ou15, ou25, ou35
         """
-        h = fixture.score_home_ft
-        a = fixture.score_away_ft
-        if h is None or a is None:
-            return {}
-
-        # 1x2
-        if h > a:
-            label_1x2 = 0  # Home
-        elif h == a:
-            label_1x2 = 1  # Draw
-        else:
-            label_1x2 = 2  # Away
-
-        # Over/Under 2.5
-        label_ou25 = 1 if (h + a) > 2 else 0
-
-        # BTTS
-        label_btts = 1 if (h > 0 and a > 0) else 0
-
-        # HT/FT (9 classes)
-        ht_h = fixture.score_home_ht
-        ht_a = fixture.score_away_ht
-        if ht_h is not None and ht_a is not None:
-            ht = "1" if ht_h > ht_a else ("X" if ht_h == ht_a else "2")
-            ft = "1" if h > a else ("X" if h == a else "2")
-            htft_map = {
-                "1/1": 0, "1/X": 1, "1/2": 2,
-                "X/1": 3, "X/X": 4, "X/2": 5,
-                "2/1": 6, "2/X": 7, "2/2": 8,
-            }
-            label_htft = htft_map[f"{ht}/{ft}"]
-        else:
-            label_htft = None
-
+        h = fixture.score_home_ft or 0
+        a = fixture.score_away_ft or 0
+        total = h + a
         return {
-            "1x2": label_1x2,
-            "ou25": label_ou25,
-            "btts": label_btts,
-            "htft": label_htft,
+            "ou15": 1 if total > 1 else 0,
+            "ou25": 1 if total > 2 else 0,
+            "ou35": 1 if total > 3 else 0,
         }
