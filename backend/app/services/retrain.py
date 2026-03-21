@@ -25,7 +25,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.fixture import Fixture
 from app.models.retrain_log import RetrainLog
-from app.services.ml_model import FEATURE_NAMES, MLPredictor
+from app.services.feature_engineering import FEATURE_NAMES, compute_feature_vector
+from app.services.league_config import get_league_by_api_id
+from app.services.ml_model import MLPredictor
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +36,11 @@ MODEL_DIR = Path(os.environ.get(
     str(Path(__file__).resolve().parent.parent.parent.parent / "ml" / "models"),
 ))
 
-# Market configs — must match ml/train.py and ml_model.py
+# Market configs — must match ml_model.py (3 binary O/U markets)
 MARKETS = {
-    "1x2": {"objective": "multi:softprob", "num_class": 3, "eval_metric": "mlogloss"},
+    "ou15": {"objective": "binary:logistic", "num_class": None, "eval_metric": "logloss"},
     "ou25": {"objective": "binary:logistic", "num_class": None, "eval_metric": "logloss"},
-    "btts": {"objective": "binary:logistic", "num_class": None, "eval_metric": "logloss"},
-    "htft": {"objective": "multi:softprob", "num_class": 9, "eval_metric": "mlogloss"},
+    "ou35": {"objective": "binary:logistic", "num_class": None, "eval_metric": "logloss"},
 }
 
 # Rolling window parameters
@@ -81,11 +82,9 @@ async def build_all_features(
 ) -> tuple[np.ndarray, dict[str, list], list[int]]:
     """
     Build feature matrix X and all label vectors for a set of fixtures.
-    Features are built ONCE and shared across all 4 markets.
+    Features are built ONCE and shared across all 3 markets.
     Returns (X, labels_dict, fixture_ids).
     """
-    ml = MLPredictor(session_factory)
-
     X_list: list[np.ndarray] = []
     labels_dict: dict[str, list] = {m: [] for m in MARKETS}
     ids: list[int] = []
@@ -105,8 +104,9 @@ async def build_all_features(
                     skipped += 1
                     continue
 
+                league_config = get_league_by_api_id(f.league_id)
                 try:
-                    vec = await ml.build_feature_vector(session, f, before_date=f.date)
+                    vec = await compute_feature_vector(session, f, league_config)
                 except Exception as e:
                     skipped += 1
                     logger.warning("Skipped fixture %d (%d total skipped): %s", f.id, skipped, e)

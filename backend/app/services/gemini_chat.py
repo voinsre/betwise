@@ -51,7 +51,7 @@ TEAM SEARCH BEHAVIOR — CRITICAL:
 - When a user mentions a team name (e.g. "What should I bet on Roma?", "How about Man United?", "Roma vs Milan"), you MUST immediately:
   1. Call search_fixtures with the team name to find the fixture
   2. Call analyze_fixture with the fixture_id from the search results
-  3. Present ALL market predictions (1x2, ou25, btts, etc.) with the full analysis
+  3. Present ALL market predictions (dc, ou15, ou25, ou35) with the full analysis
   4. Give a clear betting recommendation based on the best value selections
 - Do NOT ask the user which market they want. Show ALL markets by default.
 - Do NOT ask for clarification when the intent is clear. Just find the game and show the analysis.
@@ -83,7 +83,7 @@ def _build_tools() -> list:
                             ),
                             "market": genai.protos.Schema(
                                 type=genai.protos.Type.STRING,
-                                description="Filter by market: 1x2, ou25, btts, dc, htft",
+                                description="Filter by market: dc, ou15, ou25, ou35",
                             ),
                             "min_confidence": genai.protos.Schema(
                                 type=genai.protos.Type.INTEGER,
@@ -122,7 +122,7 @@ def _build_tools() -> list:
                             "preferred_markets": genai.protos.Schema(
                                 type=genai.protos.Type.ARRAY,
                                 items=genai.protos.Schema(type=genai.protos.Type.STRING),
-                                description="Preferred markets: 1x2, ou25, btts, dc, htft",
+                                description="Preferred markets: dc, ou15, ou25, ou35",
                             ),
                             "min_confidence": genai.protos.Schema(
                                 type=genai.protos.Type.INTEGER,
@@ -351,7 +351,7 @@ class GeminiChatService:
             except Exception:
                 return "I couldn't generate a response. Please try again."
 
-    _VALID_MARKETS = {"1x2", "ou25", "btts", "dc", "htft"}
+    _VALID_MARKETS = {"dc", "ou15", "ou25", "ou35"}
     _VALID_PREFERENCES = {"safer", "riskier"}
 
     _TEAM_ALIASES: dict[str, str] = {

@@ -341,7 +341,7 @@ async def get_model_status(_admin: dict = Depends(get_current_admin)):
     from app.services.retrain import MODEL_DIR
 
     models = {}
-    for market in ["1x2", "ou25", "btts", "htft"]:
+    for market in ["ou15", "ou25", "ou35"]:
         meta_path = MODEL_DIR / f"{market}_meta.json"
         model_path = MODEL_DIR / f"{market}_model.json"
         if meta_path.exists():
@@ -404,7 +404,7 @@ async def backfill_retrain_logs(
         return {"status": "skipped", "message": "Retrain logs already exist — skipping backfill"}
 
     inserted = 0
-    for market in ["1x2", "ou25", "btts", "htft"]:
+    for market in ["ou15", "ou25", "ou35"]:
         # Try current meta file
         meta_path = MODEL_DIR / f"{market}_meta.json"
         if meta_path.exists():
