@@ -174,7 +174,23 @@ class PredictionEngine:
                 # Best odds for this selection
                 odds_key = (market_code, label)
                 if odds_key not in best_odds:
-                    continue  # no odds available
+                    # Save prediction WITHOUT odds (probability-only)
+                    predictions.append(Prediction(
+                        fixture_id=fixture_id,
+                        market=market_code,
+                        selection=label,
+                        poisson_probability=round(poisson_prob, 4),
+                        ml_probability=round(ml_prob, 4) if ml_prob is not None else None,
+                        blended_probability=round(blended, 4),
+                        best_odd=None,
+                        best_bookmaker=None,
+                        implied_probability=None,
+                        edge=None,
+                        expected_value=None,
+                        confidence_score=0,
+                        is_value_bet=False,
+                    ))
+                    continue
 
                 o = best_odds[odds_key]
                 implied_prob = 1.0 / o.value
