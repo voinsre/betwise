@@ -15,10 +15,12 @@ COPY ml/models/ ./ml/models/
 COPY start.sh .
 RUN sed -i 's/\r$//' start.sh && chmod +x start.sh
 
-RUN adduser --disabled-password --no-create-home appuser
+RUN adduser --disabled-password --no-create-home appuser \
+    && chown -R appuser:appuser /app/ml/models
 USER appuser
 
 EXPOSE 2323
 ENV PYTHONPATH=/app
+ENV MODEL_DIR=/app/ml/models
 
 CMD ["./start.sh"]

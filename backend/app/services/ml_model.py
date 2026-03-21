@@ -414,23 +414,29 @@ class MLPredictor:
         field: str,
         fallback: str | None = None,
     ) -> float:
-        """Recency-weighted average of a field, with optional fallback."""
+        """Recency-weighted average of a field, with optional fallback.
+
+        Returns NaN when all values are missing so XGBoost can learn
+        optimal split directions for missing data (better than 0.0).
+        """
         if not games:
-            return 0.0
+            return float('nan')
 
         total_weight = 0.0
         total_value = 0.0
+        has_value = False
         for g in games:
             val = getattr(g, field, None)
             if val is None and fallback:
                 val = getattr(g, fallback, None)
             if val is None:
-                val = 0.0
+                continue
+            has_value = True
             total_weight += g.form_weight
             total_value += float(val) * g.form_weight
 
-        if total_weight == 0:
-            return 0.0
+        if not has_value or total_weight == 0:
+            return float('nan')
         return total_value / total_weight
 
     @staticmethod

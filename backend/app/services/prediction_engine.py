@@ -198,7 +198,18 @@ class PredictionEngine:
                     is_value_bet=is_value,
                 ))
 
-        # 5. Save to DB (delete old predictions first)
+        # 5. Limit to ONE value bet per market (highest edge)
+        best_value_per_market: dict[str, Prediction] = {}
+        for pred in predictions:
+            if pred.is_value_bet:
+                key = pred.market
+                if key not in best_value_per_market or pred.edge > best_value_per_market[key].edge:
+                    best_value_per_market[key] = pred
+        for pred in predictions:
+            if pred.is_value_bet and pred is not best_value_per_market.get(pred.market):
+                pred.is_value_bet = False
+
+        # 6. Save to DB (delete old predictions first)
         if predictions:
             async with self.session_factory() as session:
                 await session.execute(
@@ -378,13 +389,12 @@ class PredictionEngine:
         odds_values: list[float],
     ) -> int:
         """
-        Confidence score 0-100 based on 6 signals:
+        Confidence score 0-100 based on 5 signals:
         - Model agreement (25%): |poisson - ml| lower diff = higher
-        - Edge size (25%): larger edge = higher
+        - Probability decisiveness (25%): how decisive the model prediction is
         - Data quality (15%): league coverage flags
         - Sample size (15%): team game count completeness
-        - H2H consistency (10%): placeholder
-        - Market consensus (10%): low odds variance = higher
+        - Market consensus (20%): low odds variance = higher
         """
         score = 0.0
 
@@ -395,9 +405,11 @@ class PredictionEngine:
         else:
             score += 12.5  # neutral when no ML
 
-        # Edge size (25 points max)
-        edge_score = min(edge / 0.15, 1.0) * 25  # 15%+ edge = full marks
-        score += max(edge_score, 0)
+        # Probability decisiveness (25 points max)
+        # Higher model probability = more decisive prediction
+        max_prob = max(poisson_prob, ml_prob or 0)
+        decisiveness_score = min(max_prob / 0.70, 1.0) * 25
+        score += decisiveness_score
 
         # Data quality (15 points max)
         if league:
@@ -412,16 +424,13 @@ class PredictionEngine:
         completeness = (min(home_games, 20) + min(away_games, 20)) / 40
         score += completeness * 15
 
-        # H2H consistency (10 points max) — placeholder
-        score += 5
-
-        # Market consensus (10 points max)
+        # Market consensus (20 points max)
         if len(odds_values) >= 2:
             odds_arr = np.array(odds_values)
             variance = float(np.var(odds_arr))
-            consensus = max(0, 1 - variance * 10) * 10
+            consensus = max(0, 1 - variance * 10) * 20
             score += consensus
         else:
-            score += 5  # neutral
+            score += 10  # neutral
 
         return int(min(score, 100))

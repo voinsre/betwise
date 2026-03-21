@@ -17,6 +17,7 @@ from pathlib import Path
 
 import numpy as np
 import optuna
+import psutil
 import xgboost as xgb
 from sklearn.metrics import accuracy_score, log_loss
 from sqlalchemy import select
@@ -93,34 +94,41 @@ async def build_all_features(
     total = len(fixtures)
     t0 = time.time()
 
-    async with session_factory() as session:
-        for idx, f in enumerate(fixtures):
-            all_labels = MLPredictor.get_labels(f)
-            if not all_labels:
-                skipped += 1
-                continue
+    BATCH_SIZE = 500
+    for batch_start in range(0, len(fixtures), BATCH_SIZE):
+        batch = fixtures[batch_start:batch_start + BATCH_SIZE]
+        async with session_factory() as session:
+            for idx_in_batch, f in enumerate(batch):
+                idx = batch_start + idx_in_batch
+                all_labels = MLPredictor.get_labels(f)
+                if not all_labels:
+                    skipped += 1
+                    continue
 
-            try:
-                vec = await ml.build_feature_vector(session, f, before_date=f.date)
-            except Exception as e:
-                skipped += 1
-                if skipped <= 5:
-                    logger.warning("Skipped fixture %d: %s", f.id, e)
-                continue
+                try:
+                    vec = await ml.build_feature_vector(session, f, before_date=f.date)
+                except Exception as e:
+                    skipped += 1
+                    logger.warning("Skipped fixture %d (%d total skipped): %s", f.id, skipped, e)
+                    if skipped > len(fixtures) * 0.1:
+                        raise RuntimeError(
+                            f"Too many fixtures failed feature building: {skipped}/{len(fixtures)}"
+                        ) from e
+                    continue
 
-            X_list.append(vec)
-            for m in MARKETS:
-                labels_dict[m].append(all_labels.get(m))
-            ids.append(f.id)
+                X_list.append(vec)
+                for m in MARKETS:
+                    labels_dict[m].append(all_labels.get(m))
+                ids.append(f.id)
 
-            if (idx + 1) % 500 == 0:
-                elapsed = time.time() - t0
-                rate = (idx + 1) / elapsed if elapsed > 0 else 0
-                eta = (total - idx - 1) / rate if rate > 0 else 0
-                logger.info(
-                    "Feature progress: %d/%d fixtures (%d valid, %d skipped) ETA %.0fs",
-                    idx + 1, total, len(X_list), skipped, eta,
-                )
+            elapsed = time.time() - t0
+            rate = (idx + 1) / elapsed if elapsed > 0 else 0
+            eta = (total - idx - 1) / rate if rate > 0 else 0
+            logger.info(
+                "Feature batch %d-%d complete: %d/%d fixtures (%d valid, %d skipped) ETA %.0fs",
+                batch_start, batch_start + len(batch),
+                idx + 1, total, len(X_list), skipped, eta,
+            )
 
     logger.info(
         "Feature building complete: %d/%d fixtures (%d valid, %d skipped) in %.1fs",
@@ -171,9 +179,9 @@ def train_model_optuna(
             "tree_method": "hist",
             "verbosity": 0,
             "random_state": 42,
+            "early_stopping_rounds": 50,
         }
-        if cfg["num_class"]:
-            params["num_class"] = cfg["num_class"]
+        # num_class auto-inferred by XGBoost 2.0+ from y labels
 
         model = xgb.XGBClassifier(**params)
         model.fit(
@@ -201,8 +209,8 @@ def train_model_optuna(
     best_params["tree_method"] = "hist"
     best_params["verbosity"] = 0
     best_params["random_state"] = 42
-    if cfg["num_class"]:
-        best_params["num_class"] = cfg["num_class"]
+    best_params["early_stopping_rounds"] = 50
+    # num_class auto-inferred by XGBoost 2.0+ from y labels
 
     best_model = xgb.XGBClassifier(**best_params)
     best_model.fit(
@@ -301,7 +309,9 @@ async def retrain_all_models(
     train_range = f"{train_start} to {train_end}"
     val_range = f"{val_start} to {val_end}"
 
-    logger.info("Retrain starting — train: %s, validate: %s", train_range, val_range)
+    process = psutil.Process()
+    start_mem = process.memory_info().rss / 1024 / 1024
+    logger.info("Retrain starting — train: %s, validate: %s (memory: %.1f MB)", train_range, val_range, start_mem)
 
     # Load fixtures
     train_fixtures = await load_fixtures_rolling(session_factory, train_start, train_end)
@@ -377,6 +387,27 @@ async def retrain_all_models(
 
             metrics = evaluate_model(model, X_val, y_val, market)
 
+            # Quality gate — reject models worse than random
+            if metrics["accuracy"] < 0.30:
+                raise ValueError(
+                    f"Model {market} failed quality gate: accuracy={metrics['accuracy']:.3f} < 0.30"
+                )
+
+            # Compare against previous model if it exists
+            prev_model_path = MODEL_DIR / f"{market}_model.json"
+            if prev_model_path.exists():
+                try:
+                    prev_model = xgb.XGBClassifier()
+                    prev_model.load_model(str(prev_model_path))
+                    prev_metrics = evaluate_model(prev_model, X_val, y_val, market)
+                    if metrics["log_loss"] > prev_metrics["log_loss"] * 1.10:
+                        logger.warning(
+                            "New %s model (logloss=%.4f) is >10%% worse than current (%.4f). Saving anyway.",
+                            market, metrics["log_loss"], prev_metrics["log_loss"],
+                        )
+                except Exception as cmp_err:
+                    logger.warning("Could not compare with previous model: %s", cmp_err)
+
             # Back up old model, then save new one
             _backup_model(market)
             _save_model(model, market, metrics,
@@ -388,6 +419,12 @@ async def retrain_all_models(
                 if k in ["n_estimators", "max_depth", "learning_rate",
                           "subsample", "colsample_bytree", "min_child_weight"]
             }
+
+            current_mem = process.memory_info().rss / 1024 / 1024
+            logger.info(
+                "Market %s complete. Memory: %.1f MB (delta: +%.1f MB)",
+                market, current_mem, current_mem - start_mem,
+            )
 
             results[market] = {
                 "accuracy": round(metrics["accuracy"], 4),

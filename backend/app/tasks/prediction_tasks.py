@@ -8,6 +8,7 @@ import asyncio
 import logging
 from datetime import date
 
+from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -67,13 +68,16 @@ async def _run_all_predictions():
         await engine.dispose()
 
 
-@celery_app.task(time_limit=1800, soft_time_limit=1500)
-def retrain_ml_model():
+@celery_app.task(
+    bind=True, time_limit=1800, soft_time_limit=1500,
+    max_retries=2, default_retry_delay=60,
+)
+def retrain_ml_model(self):
     """Weekly ML model retrain using rolling data window."""
-    asyncio.run(_retrain_ml_model())
+    asyncio.run(_retrain_ml_model(self))
 
 
-async def _retrain_ml_model():
+async def _retrain_ml_model(task=None):
     engine = create_async_engine(settings.DATABASE_URL, echo=False)
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -97,7 +101,12 @@ async def _retrain_ml_model():
                         metrics["train_samples"],
                         metrics["val_samples"],
                     )
+    except SoftTimeLimitExceeded:
+        logger.error("Retrain hit soft time limit")
+        raise
     except Exception as e:
         logger.error("Retrain failed: %s", e, exc_info=True)
+        if task is not None:
+            raise task.retry(exc=e)
     finally:
         await engine.dispose()

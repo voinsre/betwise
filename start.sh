@@ -5,7 +5,7 @@ set -e
 python -m alembic -c alembic/alembic.ini upgrade head
 
 # Start Celery worker in background (conserve memory)
-celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2 --max-memory-per-child=256000 &
+celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2 --max-memory-per-child=1024000 &
 
 # Start Celery beat scheduler in background
 celery -A app.tasks.celery_app beat --loglevel=info &

@@ -186,9 +186,9 @@ def train_model_optuna(
             "tree_method": "hist",
             "verbosity": 0,
             "random_state": 42,
+            "early_stopping_rounds": 50,
         }
-        if cfg["num_class"]:
-            params["num_class"] = cfg["num_class"]
+        # num_class auto-inferred by XGBoost 2.0+ from y labels
 
         model = xgb.XGBClassifier(**params)
         model.fit(
@@ -216,8 +216,8 @@ def train_model_optuna(
     best_params["tree_method"] = "hist"
     best_params["verbosity"] = 0
     best_params["random_state"] = 42
-    if cfg["num_class"]:
-        best_params["num_class"] = cfg["num_class"]
+    best_params["early_stopping_rounds"] = 50
+    # num_class auto-inferred by XGBoost 2.0+ from y labels
 
     best_model = xgb.XGBClassifier(**best_params)
     best_model.fit(
