@@ -292,7 +292,10 @@ class PredictionEngine:
                 select(Prediction, Fixture, Team)
                 .join(Fixture, Prediction.fixture_id == Fixture.id)
                 .join(Team, Fixture.home_team_id == Team.id)
-                .where(Fixture.date == target_date)
+                .where(
+                    Fixture.date == target_date,
+                    Prediction.market.in_(list(MARKETS_CONFIG.keys())),
+                )
                 .order_by(Prediction.confidence_score.desc())
             )
             result = await session.execute(q)

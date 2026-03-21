@@ -54,7 +54,10 @@ async def get_fixture_predictions(fixture_id: int, db: AsyncSession = Depends(ge
 
     result = await db.execute(
         select(Prediction)
-        .where(Prediction.fixture_id == fixture_id)
+        .where(
+            Prediction.fixture_id == fixture_id,
+            Prediction.market.in_(["dc", "ou15", "ou25", "ou35"]),
+        )
         .order_by(Prediction.market, Prediction.selection)
     )
     predictions = result.scalars().all()
