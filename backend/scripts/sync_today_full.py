@@ -43,7 +43,8 @@ from app.models.fixture import Fixture
 from app.models.odds import Odds
 from app.models.prediction import Prediction
 from app.models.team import Team
-from app.services.api_football import APIFootballClient, TARGET_LEAGUE_IDS
+from app.services.api_football import APIFootballClient
+from app.services.league_config import get_active_league_ids
 from app.services.data_sync import DataSyncService
 from app.services.prediction_engine import PredictionEngine
 
@@ -83,7 +84,7 @@ async def main():
         async with session_factory() as session:
             result = await session.execute(
                 select(Fixture)
-                .where(Fixture.date == today, Fixture.league_id.in_(TARGET_LEAGUE_IDS))
+                .where(Fixture.date == today, Fixture.league_id.in_(get_active_league_ids()))
                 .order_by(Fixture.kickoff_time)
             )
             fixtures = list(result.scalars().all())

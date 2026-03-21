@@ -37,11 +37,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.models.fixture import Fixture
 from app.models.fixture_statistics import FixtureStatistics
 from app.models.team_last20 import TeamLast20
-from app.services.api_football import (
-    APIFootballClient,
-    BACKFILL_SEASONS,
-    TARGET_LEAGUE_IDS,
-)
+from app.services.api_football import APIFootballClient, BACKFILL_SEASONS
+from app.services.league_config import get_active_league_ids
 from app.services.data_sync import DataSyncService
 
 logging.basicConfig(
@@ -68,6 +65,16 @@ LEAGUE_NAMES = {
     40: "Championship",
     136: "Serie B",
     79: "2. Bundesliga",
+    218: "Austrian Bundesliga",
+    207: "Swiss Super League",
+    141: "La Liga 2",
+    62: "Ligue 2",
+    113: "Allsvenskan",
+    103: "Eliteserien",
+    848: "Conference League",
+    5: "Nations League",
+    4: "Euro Championship",
+    1: "World Cup",
 }
 
 
@@ -85,7 +92,7 @@ async def dry_run(session_factory, client):
     results = []
     api_calls_used = 0
 
-    for league_id in sorted(TARGET_LEAGUE_IDS):
+    for league_id in sorted(get_active_league_ids()):
         name = LEAGUE_NAMES.get(league_id, f"League {league_id}")
 
         for season in BACKFILL_SEASONS:
@@ -303,7 +310,7 @@ async def backfill(session_factory, client):
     print("=" * 75)
 
     jobs = [
-        (lid, s) for lid in sorted(TARGET_LEAGUE_IDS) for s in BACKFILL_SEASONS
+        (lid, s) for lid in sorted(get_active_league_ids()) for s in BACKFILL_SEASONS
     ]
 
     grand_fx = 0

@@ -14,7 +14,10 @@ from app.models.odds import Odds
 from app.models.standing import Standing
 from app.models.team import Team
 from app.models.team_last20 import TeamLast20
-from app.services.api_football import APIFootballClient, TARGET_LEAGUE_IDS
+from app.services.api_football import APIFootballClient
+from app.services.league_config import get_active_league_ids
+
+_ACTIVE_IDS = set(get_active_league_ids())
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +135,7 @@ class DataSyncService:
                 if not league_id:
                     continue
 
-                is_target = league_id in TARGET_LEAGUE_IDS
+                is_target = league_id in _ACTIVE_IDS
                 fixtures_cov = coverage.get("fixtures", {})
                 stats_events = fixtures_cov.get("statistics_fixtures", False)
 
@@ -162,7 +165,7 @@ class DataSyncService:
 
             await session.commit()
 
-        logger.info("Synced %d leagues (%d target)", count, len(TARGET_LEAGUE_IDS))
+        logger.info("Synced %d leagues (%d target)", count, len(_ACTIVE_IDS))
         return count
 
     # ── Teams (helper) ───────────────────────────────────────
@@ -196,7 +199,7 @@ class DataSyncService:
             "country_code": "",  # fixture data has flag URL, not code — set by sync_leagues
             "season": league_data.get("season", 0),
             "type": "League",
-            "is_active": league_id in TARGET_LEAGUE_IDS,
+            "is_active": league_id in _ACTIVE_IDS,
         }
         stmt = pg_insert(League).values(**vals)
         stmt = stmt.on_conflict_do_update(
@@ -264,7 +267,7 @@ class DataSyncService:
         async with self.session_factory() as session:
             for fx in raw:
                 league_id = fx.get("league", {}).get("id")
-                if league_id not in TARGET_LEAGUE_IDS:
+                if league_id not in _ACTIVE_IDS:
                     continue
                 await self._ensure_fixture(session, fx)
                 count += 1

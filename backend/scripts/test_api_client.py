@@ -20,7 +20,10 @@ from dotenv import load_dotenv
 env_path = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
 load_dotenv(env_path)
 
-from app.services.api_football import APIFootballClient, TARGET_LEAGUE_IDS
+from app.services.api_football import APIFootballClient
+from app.services.league_config import get_active_league_ids
+
+_ACTIVE_IDS = set(get_active_league_ids())
 
 
 def pp(obj, max_depth=3):
@@ -47,9 +50,9 @@ async def main():
         target_found = []
         for lg in leagues:
             league_info = lg.get("league", {})
-            if league_info.get("id") in TARGET_LEAGUE_IDS:
+            if league_info.get("id") in _ACTIVE_IDS:
                 target_found.append(f"    - {league_info['id']:>4}  {league_info['name']}")
-        print(f"    Our target leagues found: {len(target_found)}/15")
+        print(f"    Our target leagues found: {len(target_found)}/{len(_ACTIVE_IDS)}")
         for line in target_found[:5]:
             print(line)
         if len(target_found) > 5:
@@ -64,7 +67,7 @@ async def main():
         # Filter to our target leagues
         target_fixtures = [
             f for f in fixtures
-            if f.get("league", {}).get("id") in TARGET_LEAGUE_IDS
+            if f.get("league", {}).get("id") in _ACTIVE_IDS
         ]
         print(f"    In our target leagues: {len(target_fixtures)}")
 

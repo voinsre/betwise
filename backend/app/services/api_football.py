@@ -8,9 +8,6 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Target leagues we track
-TARGET_LEAGUE_IDS = {39, 140, 135, 78, 61, 2, 3, 88, 94, 179, 203, 144, 40, 136, 79}
-
 BACKFILL_SEASONS = [2023, 2024, 2025]
 
 

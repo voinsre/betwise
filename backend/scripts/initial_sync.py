@@ -37,7 +37,8 @@ from app.models.odds import Odds
 from app.models.standing import Standing
 from app.models.team import Team
 from app.models.team_last20 import TeamLast20
-from app.services.api_football import APIFootballClient, TARGET_LEAGUE_IDS
+from app.services.api_football import APIFootballClient
+from app.services.league_config import get_active_league_ids
 from app.services.data_sync import DataSyncService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
