@@ -33,6 +33,9 @@ pyjwt==2.10.1
 passlib[bcrypt]==1.7.4
 slowapi==0.1.9
 
+# Fuzzy matching
+rapidfuzz>=3.0.0
+
 # Config
 pydantic-settings==2.7.1
 python-dotenv==1.0.1
