@@ -23,31 +23,18 @@ logger = logging.getLogger(__name__)
 
 # Map API-Football bet names → our market codes + label normalization
 MARKET_MAP = {
-    "Match Winner": {
-        "code": "1x2",
-        "labels": {"Home": "Home", "Draw": "Draw", "Away": "Away"},
-    },
-    "Goals Over/Under": {
-        "code": "ou25",
-        # We only keep the 2.5 line
-        "labels": {"Over 2.5": "Over 2.5", "Under 2.5": "Under 2.5"},
-    },
-    "Both Teams Score": {
-        "code": "btts",
-        "labels": {"Yes": "Yes", "No": "No"},
-    },
     "Double Chance": {
         "code": "dc",
         "labels": {"Home/Draw": "1X", "Home/Away": "12", "Draw/Away": "X2"},
     },
-    "HT/FT Double": {
-        "code": "htft",
-        "labels": {
-            "1/1": "1/1", "1/X": "1/X", "1/2": "1/2",
-            "X/1": "X/1", "X/X": "X/X", "X/2": "X/2",
-            "2/1": "2/1", "2/X": "2/X", "2/2": "2/2",
-        },
-    },
+}
+
+# API-Football "Goals Over/Under" returns all lines in one bet.
+# Map each value string → (market_code, label).
+GOAL_LINE_MAP = {
+    "Over 1.5": ("ou15", "Over 1.5"), "Under 1.5": ("ou15", "Under 1.5"),
+    "Over 2.5": ("ou25", "Over 2.5"), "Under 2.5": ("ou25", "Under 2.5"),
+    "Over 3.5": ("ou35", "Over 3.5"), "Under 3.5": ("ou35", "Under 3.5"),
 }
 
 # Stat type name → our column name
@@ -544,39 +531,61 @@ class DataSyncService:
 
                     for bet in bk.get("bets", []):
                         bet_name = bet.get("name", "")
+
+                        # Branch 1: MARKET_MAP markets (Double Chance)
                         mapping = MARKET_MAP.get(bet_name)
-                        if not mapping:
+                        if mapping:
+                            market_code = mapping["code"]
+                            label_map = mapping["labels"]
+                            for v in bet.get("values", []):
+                                raw_label = str(v.get("value", ""))
+                                our_label = label_map.get(raw_label)
+                                if our_label is None:
+                                    continue
+                                try:
+                                    odd_val = float(v.get("odd", 0))
+                                except (ValueError, TypeError):
+                                    continue
+                                if odd_val <= 1.0:
+                                    continue
+                                session.add(Odds(
+                                    fixture_id=fixture_id,
+                                    bookmaker_id=bk_id,
+                                    bookmaker_name=bk_name,
+                                    market=market_code,
+                                    label=our_label,
+                                    value=odd_val,
+                                    implied_probability=round(1.0 / odd_val, 6),
+                                    fetched_at=now,
+                                ))
+                                count += 1
                             continue
 
-                        market_code = mapping["code"]
-                        label_map = mapping["labels"]
-
-                        for v in bet.get("values", []):
-                            raw_label = str(v.get("value", ""))
-                            our_label = label_map.get(raw_label)
-                            if our_label is None:
-                                continue
-
-                            try:
-                                odd_val = float(v.get("odd", 0))
-                            except (ValueError, TypeError):
-                                continue
-
-                            if odd_val <= 1.0:
-                                continue
-
-                            row = Odds(
-                                fixture_id=fixture_id,
-                                bookmaker_id=bk_id,
-                                bookmaker_name=bk_name,
-                                market=market_code,
-                                label=our_label,
-                                value=odd_val,
-                                implied_probability=round(1.0 / odd_val, 6),
-                                fetched_at=now,
-                            )
-                            session.add(row)
-                            count += 1
+                        # Branch 2: Goal line markets (ou15, ou25, ou35)
+                        if bet_name == "Goals Over/Under":
+                            for v in bet.get("values", []):
+                                raw_label = str(v.get("value", ""))
+                                line_info = GOAL_LINE_MAP.get(raw_label)
+                                if not line_info:
+                                    continue
+                                market_code, our_label = line_info
+                                try:
+                                    odd_val = float(v.get("odd", 0))
+                                except (ValueError, TypeError):
+                                    continue
+                                if odd_val <= 1.0:
+                                    continue
+                                session.add(Odds(
+                                    fixture_id=fixture_id,
+                                    bookmaker_id=bk_id,
+                                    bookmaker_name=bk_name,
+                                    market=market_code,
+                                    label=our_label,
+                                    value=odd_val,
+                                    implied_probability=round(1.0 / odd_val, 6),
+                                    fetched_at=now,
+                                ))
+                                count += 1
 
             await session.commit()
 
