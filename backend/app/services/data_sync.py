@@ -403,6 +403,16 @@ class DataSyncService:
                     vals["possession"] = stat_row.ball_possession
                     vals["corners"] = stat_row.corner_kicks
 
+                # Opponent xG for xg_against
+                opp_stat_row = (await session.execute(
+                    select(FixtureStatistics).where(
+                        FixtureStatistics.fixture_id == fixture_id,
+                        FixtureStatistics.team_id == opponent_id,
+                    )
+                )).scalar_one_or_none()
+                if opp_stat_row:
+                    vals["xg_against"] = opp_stat_row.expected_goals
+
                 # Upsert using the unique constraint (team_id, fixture_id)
                 stmt = pg_insert(TeamLast20).values(**vals)
                 stmt = stmt.on_conflict_do_update(
@@ -452,6 +462,7 @@ class DataSyncService:
                 await self._ensure_fixture(session, fx)
 
                 home_id = teams.get("home", {}).get("id")
+                away_id = teams.get("away", {}).get("id")
                 score_home = _parse_int(goals.get("home")) or 0
                 score_away = _parse_int(goals.get("away")) or 0
                 total = score_home + score_away
@@ -466,6 +477,20 @@ class DataSyncService:
                 kickoff = _parse_dt(fi.get("date"))
                 fx_date = kickoff.date() if kickoff else date.today()
 
+                # Look up xG from fixture_statistics for both teams
+                home_stats = (await session.execute(
+                    select(FixtureStatistics).where(
+                        FixtureStatistics.fixture_id == fixture_id,
+                        FixtureStatistics.team_id == home_id,
+                    )
+                )).scalar_one_or_none()
+                away_stats = (await session.execute(
+                    select(FixtureStatistics).where(
+                        FixtureStatistics.fixture_id == fixture_id,
+                        FixtureStatistics.team_id == away_id,
+                    )
+                )).scalar_one_or_none()
+
                 row = HeadToHead(
                     team1_id=t1,
                     team2_id=t2,
@@ -476,8 +501,8 @@ class DataSyncService:
                     score_away=score_away,
                     winner=winner,
                     total_goals=total,
-                    xg_home=None,
-                    xg_away=None,
+                    xg_home=home_stats.expected_goals if home_stats else None,
+                    xg_away=away_stats.expected_goals if away_stats else None,
                     league_id=lg.get("id", 0),
                 )
                 session.add(row)
