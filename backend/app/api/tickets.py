@@ -15,7 +15,7 @@ from app.services.ticket_builder import TicketBuilder
 
 router = APIRouter()
 
-VALID_MARKETS = {"1x2", "ou25", "btts", "dc", "htft"}
+VALID_MARKETS = {"dc", "ou15", "ou25", "ou35"}
 
 
 class TicketBuildRequest(BaseModel):
