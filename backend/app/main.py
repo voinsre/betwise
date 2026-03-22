@@ -11,7 +11,7 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from app.api import admin, chat, fixtures, predictions, tickets
+from app.api import admin, chat, fixtures, history, predictions, tickets
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,7 @@ app.include_router(fixtures.router, prefix="/api/fixtures", tags=["fixtures"])
 app.include_router(predictions.router, prefix="/api/predictions", tags=["predictions"])
 app.include_router(tickets.router, prefix="/api/tickets", tags=["tickets"])
 app.include_router(chat.router, prefix="/api", tags=["chat"])
+app.include_router(history.router, prefix="/api", tags=["history"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 
 

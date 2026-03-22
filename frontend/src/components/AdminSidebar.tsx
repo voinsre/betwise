@@ -1,19 +1,38 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { clearToken } from "@/lib/api";
 
 const NAV_ITEMS = [
   { href: "/admin", label: "Dashboard", icon: "M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0h4" },
+  { href: "/admin/history", label: "History", icon: "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" },
   { href: "/admin/data-health", label: "Data Health", icon: "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" },
   { href: "/admin/accuracy", label: "Accuracy", icon: "M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" },
   { href: "/admin/retrain", label: "ML Retrain", icon: "M4.26 10.147a60.438 60.438 0 00-.491 6.347A48.62 48.62 0 0112 20.904a48.62 48.62 0 018.232-4.41 60.46 60.46 0 00-.491-6.347m-15.482 0a50.636 50.636 0 00-2.658-.813A59.906 59.906 0 0112 3.493a59.903 59.903 0 0110.399 5.84c-.896.248-1.783.52-2.658.814m-15.482 0A50.717 50.717 0 0112 13.489a50.702 50.702 0 017.74-3.342M6.75 15a.75.75 0 100-1.5.75.75 0 000 1.5zm0 0v-3.675A55.378 55.378 0 0112 8.443m-7.007 11.55A5.981 5.981 0 006.75 15.75v-1.5" },
   { href: "/admin/settings", label: "Settings", icon: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z" },
 ];
 
+const STORAGE_KEY = "sidebar_collapsed";
+
 export default function AdminSidebar() {
   const pathname = usePathname();
+  const [collapsed, setCollapsed] = useState(false);
+
+  // Hydrate from localStorage after mount
+  useEffect(() => {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored === "true") setCollapsed(true);
+  }, []);
+
+  function toggleCollapsed() {
+    setCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem(STORAGE_KEY, String(next));
+      return next;
+    });
+  }
 
   function handleLogout() {
     clearToken();
@@ -21,29 +40,36 @@ export default function AdminSidebar() {
   }
 
   return (
-    <aside className="w-64 min-h-screen bg-brand-surface border-r border-brand-border flex flex-col">
+    <aside
+      className={`${
+        collapsed ? "w-16" : "w-64"
+      } min-h-screen bg-brand-surface border-r border-brand-border flex flex-col transition-all duration-200`}
+    >
       {/* Logo */}
-      <div className="p-6 border-b border-brand-border">
-        <Link href="/admin" className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden">
+      <div className={`${collapsed ? "p-3" : "p-6"} border-b border-brand-border`}>
+        <Link href="/" className="flex items-center gap-3" title="Home">
+          <div className={`${collapsed ? "w-10 h-10 mx-auto" : "w-8 h-8"} rounded-lg flex items-center justify-center overflow-hidden flex-shrink-0`}>
             <img src="/icon-192.png" alt="WizerBet" className="w-full h-full" />
           </div>
-          <div>
-            <h1 className="text-lg font-bold text-white">Wizer<span className="text-accent-green">Bet</span></h1>
-            <p className="text-xs text-gray-500">Admin Dashboard</p>
-          </div>
+          {!collapsed && (
+            <div>
+              <h1 className="text-lg font-bold text-white">Wizer<span className="text-accent-green">Bet</span></h1>
+              <p className="text-xs text-gray-500">Admin Dashboard</p>
+            </div>
+          )}
         </Link>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 p-4 space-y-1">
+      <nav className={`flex-1 ${collapsed ? "p-2" : "p-4"} space-y-1`}>
         {NAV_ITEMS.map((item) => {
           const isActive = pathname === item.href;
           return (
             <Link
               key={item.href}
               href={item.href}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+              title={collapsed ? item.label : undefined}
+              className={`flex items-center ${collapsed ? "justify-center" : ""} gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                 isActive
                   ? "bg-accent-green/10 text-accent-green"
                   : "text-gray-400 hover:text-white hover:bg-brand-card"
@@ -52,22 +78,42 @@ export default function AdminSidebar() {
               <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
               </svg>
-              {item.label}
+              {!collapsed && item.label}
             </Link>
           );
         })}
       </nav>
 
-      {/* Logout */}
-      <div className="p-4 border-t border-brand-border">
+      {/* Collapse toggle + Logout */}
+      <div className={`${collapsed ? "p-2" : "p-4"} border-t border-brand-border space-y-1`}>
+        {/* Toggle */}
+        <button
+          onClick={toggleCollapsed}
+          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          className={`flex items-center ${collapsed ? "justify-center" : ""} gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-400 hover:text-white hover:bg-brand-card transition-colors w-full`}
+        >
+          <svg
+            className={`w-5 h-5 flex-shrink-0 transition-transform ${collapsed ? "rotate-180" : ""}`}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={1.5}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M18.75 19.5l-7.5-7.5 7.5-7.5m-6 15L5.25 12l7.5-7.5" />
+          </svg>
+          {!collapsed && "Collapse"}
+        </button>
+
+        {/* Logout */}
         <button
           onClick={handleLogout}
-          className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-400 hover:text-accent-red hover:bg-brand-card transition-colors w-full"
+          title={collapsed ? "Logout" : undefined}
+          className={`flex items-center ${collapsed ? "justify-center" : ""} gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-400 hover:text-accent-red hover:bg-brand-card transition-colors w-full`}
         >
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
           </svg>
-          Logout
+          {!collapsed && "Logout"}
         </button>
       </div>
     </aside>

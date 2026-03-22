@@ -244,6 +244,71 @@ export async function backfillRetrainLogs() {
   );
 }
 
+// --- History API (public) ---
+
+export interface HistoryPrediction {
+  market: string;
+  selection: string;
+  blended_probability: number;
+  best_odd: number | null;
+  best_bookmaker: string | null;
+  edge: number | null;
+  confidence: number;
+  is_value_bet: boolean;
+  is_correct: boolean | null;
+  profit: number | null;
+}
+
+export interface HistoryFixture {
+  fixture_id: number;
+  date: string;
+  kickoff: string;
+  home_team: string;
+  away_team: string;
+  league: string;
+  score: string | null;
+  status: string;
+  predictions: HistoryPrediction[];
+}
+
+export interface HistorySummary {
+  total_bets: number;
+  correct: number;
+  hit_rate: number;
+  total_profit: number;
+  roi: number;
+  avg_edge: number;
+  avg_confidence: number;
+  date_from: string | null;
+  date_to: string | null;
+  period_label: string;
+}
+
+export interface HistoryResponse {
+  summary: HistorySummary;
+  by_market: Record<string, { bets: number; correct: number; hit_rate: number; profit: number }>;
+  fixtures: HistoryFixture[];
+}
+
+export async function getHistory(params: {
+  period?: string;
+  date_from?: string;
+  date_to?: string;
+  market?: string;
+  value_only?: boolean;
+}): Promise<HistoryResponse> {
+  const searchParams = new URLSearchParams();
+  if (params.period) searchParams.set("period", params.period);
+  if (params.date_from) searchParams.set("date_from", params.date_from);
+  if (params.date_to) searchParams.set("date_to", params.date_to);
+  if (params.market) searchParams.set("market", params.market);
+  if (params.value_only !== undefined) searchParams.set("value_only", String(params.value_only));
+  const qs = searchParams.toString();
+  return fetchApi<HistoryResponse>(`/api/history${qs ? `?${qs}` : ""}`);
+}
+
+// --- Predictions API ---
+
 export async function getValueBets(dateStr: string) {
   return fetchApi<{
     date: string;
