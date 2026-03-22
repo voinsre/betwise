@@ -233,3 +233,26 @@ async def _update_elo_ratings_task():
         logger.error("Elo ratings update failed: %s", exc, exc_info=True)
     finally:
         await engine.dispose()
+
+
+# ── sync_footballdata_odds_task ────────────────────────────────
+
+@celery_app.task
+def sync_footballdata_odds_task():
+    """Weekly: import Pinnacle closing odds from football-data.co.uk CSVs."""
+    asyncio.run(_sync_footballdata_odds_task())
+
+
+async def _sync_footballdata_odds_task():
+    engine = create_async_engine(settings.DATABASE_URL, echo=False)
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    try:
+        from app.services.footballdata_sync import sync_footballdata_odds
+
+        stats = await sync_footballdata_odds(session_factory)
+        logger.info("Football-data odds sync complete: %s", stats)
+    except Exception as exc:
+        logger.error("Football-data odds sync failed: %s", exc, exc_info=True)
+    finally:
+        await engine.dispose()

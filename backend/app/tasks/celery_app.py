@@ -77,4 +77,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.sync_tasks.update_elo_ratings_task",
         "schedule": crontab(hour=2, minute=0, day_of_week="monday"),
     },
+    # ── Weekly football-data.co.uk Pinnacle odds import ──────────
+    # Mon 01:00 → before Elo (02:00) and retrain (03:00)
+    "sync-footballdata-odds": {
+        "task": "app.tasks.sync_tasks.sync_footballdata_odds_task",
+        "schedule": crontab(hour=1, minute=0, day_of_week="monday"),
+    },
 }
