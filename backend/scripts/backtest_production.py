@@ -2,12 +2,13 @@
 Production Backtest — uses the REAL PoissonPredictor logic and MLPredictor
 with before_date filtering to prevent data leakage.
 
-Runs TWO scenarios side-by-side:
-  A) SWAPPED: old production ML label mapping (the bug, no calibration)
-     idx = labels.index(label) → proba[0]=P(Under) assigned to "Over"
-  B) CORRECTED: fixed ML mapping + isotonic calibration
-     "Over" → proba[1]=P(Over), "Under" → proba[0]=P(Under)
-     + isotonic calibration applied after blending
+Runs TWO scenarios side-by-side (30-feature models + calibration):
+  A) BEST:        DC 1X blacklisted, min confidence 70
+  B) BEST_CONF60: DC 1X blacklisted, min confidence 60
+
+Compare against previous baselines:
+  CORRECTED (30-feat, no blacklist, conf 60): 1734 bets, -24.8u, -1.4% ROI
+  42-feat V2 (blacklist, conf 70):             811 bets, -40.5u, -5.0% ROI
 
 Read-only — does not modify any database tables.
 """
@@ -51,6 +52,7 @@ from app.services.prediction_engine import (
     ML_MARKETS,
     VALUE_BET_MARKETS,
     DISPLAY_ONLY_MARKETS,
+    BLACKLISTED_SELECTIONS,
     MARKET_ALPHA,
     MARKET_ODDS_MIN,
 )
@@ -430,8 +432,14 @@ async def run_backtest():
     has_ml = ml.is_ready()
     ml_model_keys = list(ml._models.keys()) if has_ml else []
 
-    swapped = make_tracker()
-    corrected = make_tracker()
+    # Two scenarios — 30-feature models + calibration
+    best = make_tracker()        # DC 1X blacklisted, min confidence 70
+    best_c60 = make_tracker()    # DC 1X blacklisted, min confidence 60
+
+    scenarios = [
+        ("BEST", best, True, 70),        # (label, tracker, blacklist_1x, min_conf)
+        ("C60", best_c60, True, 60),
+    ]
 
     league_stats_cache = {}
     t0 = time.time()
@@ -464,7 +472,9 @@ async def run_backtest():
         print(f"Config: VALUE_BET_MARKETS={VALUE_BET_MARKETS}, ODDS_MAX={ODDS_MAX}, MIN_EDGE={GLOBAL_MIN_EDGE}%")
         print(f"MARKET_ALPHA={MARKET_ALPHA}")
         print(f"ML models loaded: {has_ml} ({ml_model_keys})")
-        print(f"Running TWO scenarios: SWAPPED (production bug) vs CORRECTED (fixed ML mapping)")
+        print(f"Running TWO scenarios: BEST (conf70) / BEST_CONF60 (conf60)")
+        print(f"Previous CORRECTED baseline: 1734 bets, -24.8u, -1.4% ROI")
+        print(f"Previous 42-feat V2: 811 bets, -40.5u, -5.0% ROI")
         print()
 
         for i, row in enumerate(fixtures):
@@ -474,13 +484,13 @@ async def run_backtest():
                 elapsed = time.time() - t0
                 rate = i / elapsed
                 eta = (total - i) / rate if rate > 0 else 0
-                for lbl, t in [("SWAP", swapped), ("CORR", corrected)]:
-                    vb = t["stats"]["value_bets"]
-                    vc = t["stats"]["value_correct"]
+                for lbl, t_, _, _ in scenarios:
+                    vb = t_["stats"]["value_bets"]
+                    vc = t_["stats"]["value_correct"]
                     hr = round(vc / vb * 100, 1) if vb > 0 else 0
                     print(
                         f"  [{lbl}] {i}/{total} ({i/total*100:.0f}%) — "
-                        f"{vb} bets, {hr}% hit, {t['stats']['total_profit']:+.1f}u  "
+                        f"{vb} bets, {hr}% hit, {t_['stats']['total_profit']:+.1f}u  "
                         f"[{elapsed:.0f}s elapsed, ETA {eta:.0f}s]"
                     )
 
@@ -495,12 +505,12 @@ async def run_backtest():
             away_all = await get_team_games(session, away_id, fdate)
 
             if len(home_all) < 3 or len(away_all) < 3:
-                swapped["stats"]["fixtures_skipped_no_form"] += 1
-                corrected["stats"]["fixtures_skipped_no_form"] += 1
+                for _, t_, _, _ in scenarios:
+                    t_["stats"]["fixtures_skipped_no_form"] += 1
                 continue
 
-            swapped["stats"]["fixtures_analyzed"] += 1
-            corrected["stats"]["fixtures_analyzed"] += 1
+            for _, t_, _, _ in scenarios:
+                t_["stats"]["fixtures_analyzed"] += 1
 
             # ── League stats (cached per league/season/month) ──
             cache_key = (league_id, season, fdate.year, fdate.month)
@@ -565,8 +575,8 @@ async def run_backtest():
             )
             all_odds = list(odds_result.scalars().all())
             if not all_odds:
-                swapped["stats"]["fixtures_skipped_no_odds"] += 1
-                corrected["stats"]["fixtures_skipped_no_odds"] += 1
+                for _, t_, _, _ in scenarios:
+                    t_["stats"]["fixtures_skipped_no_odds"] += 1
                 continue
 
             best_odds = {}
@@ -598,10 +608,9 @@ async def run_backtest():
             away_games_count = ac_r.scalar() or 0
 
             # ══════════════════════════════════════════
-            # EVALUATE EACH MARKET/SELECTION — TWO SCENARIOS
+            # EVALUATE EACH MARKET/SELECTION — THREE SCENARIOS
             # ══════════════════════════════════════════
-            swapped_candidates = []
-            corrected_candidates = []
+            scenario_candidates = {lbl: [] for lbl, _, _, _ in scenarios}
 
             for market_code, config in MARKETS_CONFIG.items():
                 if not is_market_active(league_id, market_code):
@@ -616,94 +625,90 @@ async def run_backtest():
 
                     is_correct = evaluate_bet(market_code, label, h_goals, a_goals)
 
-                    # ── ML prob: SWAPPED (production bug) ──
-                    ml_prob_swapped = None
-                    if market_code in ml_raw and market_code in ML_MARKETS:
-                        proba = ml_raw[market_code]
-                        idx = MARKETS_CONFIG[market_code]["labels"].index(label)
-                        if idx < len(proba):
-                            ml_prob_swapped = float(proba[idx])
-
-                    # ── ML prob: CORRECTED ──
-                    ml_prob_corrected = None
+                    # ── ML prob: CORRECTED mapping (all scenarios use this) ──
+                    ml_prob = None
                     if market_code in ml_raw and market_code in ML_MARKETS:
                         proba = ml_raw[market_code]
                         if "Over" in label:
-                            ml_prob_corrected = float(proba[1])  # P(class1=Over)
+                            ml_prob = float(proba[1])  # P(class1=Over)
                         elif "Under" in label:
-                            ml_prob_corrected = float(proba[0])  # P(class0=Under)
+                            ml_prob = float(proba[0])  # P(class0=Under)
 
                     alpha = MARKET_ALPHA.get(market_code, 0.50)
 
-                    for scenario_name, tracker, ml_prob in [
-                        ("swapped", swapped, ml_prob_swapped),
-                        ("corrected", corrected, ml_prob_corrected),
-                    ]:
-                        if ml_prob is not None and market_code in ML_MARKETS:
-                            blended = alpha * poisson_prob + (1 - alpha) * ml_prob
-                        else:
-                            blended = poisson_prob
+                    if ml_prob is not None and market_code in ML_MARKETS:
+                        blended = alpha * poisson_prob + (1 - alpha) * ml_prob
+                    else:
+                        blended = poisson_prob
 
-                        # Apply isotonic calibration (CORRECTED scenario only)
-                        if scenario_name == "corrected":
-                            blended = calibrate_probability(market_code, blended)
+                    # Apply isotonic calibration (all scenarios)
+                    blended = calibrate_probability(market_code, blended)
 
+                    # Get best odds
+                    odds_key = (market_code, label)
+                    if odds_key not in best_odds:
+                        # Still count predictions for calibration
+                        for _, t_, _, _ in scenarios:
+                            t_["stats"]["predictions_generated"] += 1
+                            bucket = f"{int(blended * 10) / 10:.1f}"
+                            t_["all_calibration"][market_code][bucket]["count"] += 1
+                            t_["all_calibration"][market_code][bucket]["correct"] += int(is_correct)
+                        continue
+
+                    odd_value = best_odds[odds_key]
+                    implied_prob = 1.0 / odd_value
+                    edge = blended - implied_prob
+
+                    # Pinnacle edge
+                    pkey = f"{market_code}_{label}".lower().replace(" ", "_")
+                    pinnacle_prob = (
+                        1.0 / pinnacle_odds[pkey] if pkey in pinnacle_odds else None
+                    )
+                    pinnacle_edge = (
+                        (blended - pinnacle_prob) if pinnacle_prob else None
+                    )
+                    effective_edge = (
+                        pinnacle_edge if pinnacle_edge is not None else edge
+                    )
+
+                    # Confidence
+                    confidence = calc_confidence(
+                        poisson_prob,
+                        ml_prob,
+                        edge,
+                        league_orm,
+                        home_games_count,
+                        away_games_count,
+                        odds_by_market.get(market_code, []),
+                    )
+
+                    # Value detection per scenario
+                    effective_min_edge = max(
+                        GLOBAL_MIN_EDGE, league_config.min_edge_pct
+                    )
+                    odds_min = MARKET_ODDS_MIN.get(market_code, settings.ODDS_MIN)
+
+                    for s_label, tracker, blacklist_1x, min_conf in scenarios:
                         tracker["stats"]["predictions_generated"] += 1
-
-                        # Calibration for ALL predictions
                         bucket = f"{int(blended * 10) / 10:.1f}"
                         tracker["all_calibration"][market_code][bucket]["count"] += 1
                         tracker["all_calibration"][market_code][bucket]["correct"] += int(is_correct)
 
-                        # Get best odds
-                        odds_key = (market_code, label)
-                        if odds_key not in best_odds:
-                            continue
-
-                        odd_value = best_odds[odds_key]
-                        implied_prob = 1.0 / odd_value
-                        edge = blended - implied_prob
-
-                        # Pinnacle edge
-                        pkey = f"{market_code}_{label}".lower().replace(" ", "_")
-                        pinnacle_prob = (
-                            1.0 / pinnacle_odds[pkey] if pkey in pinnacle_odds else None
-                        )
-                        pinnacle_edge = (
-                            (blended - pinnacle_prob) if pinnacle_prob else None
-                        )
-                        effective_edge = (
-                            pinnacle_edge if pinnacle_edge is not None else edge
-                        )
-
-                        # Confidence
-                        confidence = calc_confidence(
-                            poisson_prob,
-                            ml_prob,
-                            edge,
-                            league_orm,
-                            home_games_count,
-                            away_games_count,
-                            odds_by_market.get(market_code, []),
-                        )
-
-                        # Value detection (exact production logic)
-                        effective_min_edge = max(
-                            GLOBAL_MIN_EDGE, league_config.min_edge_pct
-                        )
-                        odds_min = MARKET_ODDS_MIN.get(market_code, settings.ODDS_MIN)
+                        effective_min_confidence = max(min_conf, league_config.min_confidence_pct)
                         is_value = (
                             (effective_edge * 100) >= effective_min_edge
-                            and confidence >= league_config.min_confidence_pct
+                            and confidence >= effective_min_confidence
                             and odd_value >= odds_min
                             and odd_value <= ODDS_MAX
                             and market_code in VALUE_BET_MARKETS
                         )
                         if market_code in DISPLAY_ONLY_MARKETS:
                             is_value = False
+                        if blacklist_1x and (market_code, label) in BLACKLISTED_SELECTIONS:
+                            is_value = False
 
                         if is_value:
-                            candidate = {
+                            scenario_candidates[s_label].append({
                                 "market_code": market_code,
                                 "label": label,
                                 "odd_value": odd_value,
@@ -712,17 +717,11 @@ async def run_backtest():
                                 "confidence": confidence,
                                 "is_correct": is_correct,
                                 "blended": blended,
-                            }
-                            if scenario_name == "swapped":
-                                swapped_candidates.append(candidate)
-                            else:
-                                corrected_candidates.append(candidate)
+                            })
 
             # ── Enforce one value bet per market per fixture ──
-            for candidates, tracker in [
-                (swapped_candidates, swapped),
-                (corrected_candidates, corrected),
-            ]:
+            for s_label, tracker, _, _ in scenarios:
+                candidates = scenario_candidates[s_label]
                 best_per_market = {}
                 for c in candidates:
                     mkt = c["market_code"]
@@ -749,7 +748,7 @@ async def run_backtest():
 
     elapsed = time.time() - t0
     print(f"\nBacktest completed in {elapsed:.0f}s ({elapsed/60:.1f}m)")
-    print_results(swapped, corrected)
+    print_results(best, best_c60)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -757,10 +756,10 @@ async def run_backtest():
 # ═══════════════════════════════════════════════════════════════════
 
 
-def print_results(swapped, corrected):
+def print_results(best, best_c60):
     for label_s, t in [
-        ("SWAPPED (Production Bug)", swapped),
-        ("CORRECTED (Fixed ML Mapping)", corrected),
+        ("BEST (30-feat, DC 1X blacklisted, conf>=70)", best),
+        ("BEST_CONF60 (30-feat, DC 1X blacklisted, conf>=60)", best_c60),
     ]:
         s = t["stats"]
         vb = s["value_bets"]
@@ -872,73 +871,69 @@ def print_results(swapped, corrected):
                 print(f"    {bucket:<10} {data['count']:>6} {predicted:>10.2f} {actual:>8.3f} {gap:>+8.3f} {direction}")
 
     # ═══════════════════════════════════════════════════
-    # SIDE-BY-SIDE COMPARISON
+    # SIDE-BY-SIDE COMPARISON (3 scenarios + previous baseline)
     # ═══════════════════════════════════════════════════
-    ss = swapped["stats"]
-    cs = corrected["stats"]
-    svb = ss["value_bets"]
-    cvb = cs["value_bets"]
-    shr = round(ss["value_correct"] / svb * 100, 1) if svb > 0 else 0
-    chr_ = round(cs["value_correct"] / cvb * 100, 1) if cvb > 0 else 0
-    sroi = round(ss["total_profit"] / svb * 100, 1) if svb > 0 else 0
-    croi = round(cs["total_profit"] / cvb * 100, 1) if cvb > 0 else 0
+    trackers = [
+        ("BEST", best),
+        ("C60", best_c60),
+    ]
+
+    def _roi(t_):
+        vb_ = t_["stats"]["value_bets"]
+        return round(t_["stats"]["total_profit"] / vb_ * 100, 1) if vb_ > 0 else 0
+
+    def _hr(t_):
+        vb_ = t_["stats"]["value_bets"]
+        return round(t_["stats"]["value_correct"] / vb_ * 100, 1) if vb_ > 0 else 0
 
     print("\n" + "=" * 70)
     print("  SIDE-BY-SIDE COMPARISON")
     print("=" * 70)
-    print(f"  {'Metric':<25} {'SWAPPED':>12} {'CORRECTED':>12} {'Delta':>10}")
-    print(f"  {'-'*25} {'-'*12} {'-'*12} {'-'*10}")
-    print(f"  {'Fixtures analyzed':<25} {ss['fixtures_analyzed']:>12,} {cs['fixtures_analyzed']:>12,}")
-    print(f"  {'Value bets':<25} {svb:>12,} {cvb:>12,} {cvb - svb:>+10,}")
-    print(f"  {'Correct':<25} {ss['value_correct']:>12,} {cs['value_correct']:>12,} {cs['value_correct'] - ss['value_correct']:>+10,}")
-    s_hr_str = f"{shr}%"
-    c_hr_str = f"{chr_}%"
-    d_hr_str = f"{chr_ - shr:+.1f}%"
-    s_pnl = ss["total_profit"]
-    c_pnl = cs["total_profit"]
-    s_pnl_str = f"{s_pnl:+.1f}u"
-    c_pnl_str = f"{c_pnl:+.1f}u"
-    d_pnl_str = f"{c_pnl - s_pnl:+.1f}u"
-    s_roi_str = f"{sroi}%"
-    c_roi_str = f"{croi}%"
-    d_roi_str = f"{croi - sroi:+.1f}%"
-    s_fa = max(ss["fixtures_analyzed"], 1)
-    c_fa = max(cs["fixtures_analyzed"], 1)
-    s_sel_str = f"{round(svb / s_fa * 100, 1)}%"
-    c_sel_str = f"{round(cvb / c_fa * 100, 1)}%"
-    print(f"  {'Hit rate':<25} {s_hr_str:>12} {c_hr_str:>12} {d_hr_str:>10}")
-    print(f"  {'P&L':<25} {s_pnl_str:>12} {c_pnl_str:>12} {d_pnl_str:>10}")
-    print(f"  {'ROI':<25} {s_roi_str:>12} {c_roi_str:>12} {d_roi_str:>10}")
-    print(f"  {'Selection rate':<25} {s_sel_str:>12} {c_sel_str:>12}")
+    print(f"  Previous CORRECTED baseline: 1734 bets, -24.8u, -1.4% ROI")
+    print(f"  Previous 42-feat V2:          811 bets, -40.5u, -5.0% ROI")
+    print()
+    print(f"  {'Metric':<25} {'BEST':>12} {'C60':>12}")
+    print(f"  {'-'*25} {'-'*12} {'-'*12}")
+    for metric in ["fixtures_analyzed", "value_bets", "value_correct"]:
+        vals = [t_["stats"][metric] for _, t_ in trackers]
+        print(f"  {metric:<25} {vals[0]:>12,} {vals[1]:>12,}")
+    hr_vals = [f"{_hr(t_)}%" for _, t_ in trackers]
+    pnl_vals = [f"{t_['stats']['total_profit']:+.1f}u" for _, t_ in trackers]
+    roi_vals = [f"{_roi(t_)}%" for _, t_ in trackers]
+    sel_vals = [f"{round(t_['stats']['value_bets']/max(t_['stats']['fixtures_analyzed'],1)*100,1)}%" for _, t_ in trackers]
+    print(f"  {'Hit rate':<25} {hr_vals[0]:>12} {hr_vals[1]:>12}")
+    print(f"  {'P&L':<25} {pnl_vals[0]:>12} {pnl_vals[1]:>12}")
+    print(f"  {'ROI':<25} {roi_vals[0]:>12} {roi_vals[1]:>12}")
+    print(f"  {'Selection rate':<25} {sel_vals[0]:>12} {sel_vals[1]:>12}")
 
     # Per-market comparison
     all_markets = sorted(
-        set(list(swapped["by_market"].keys()) + list(corrected["by_market"].keys()))
+        set().union(*(t_["by_market"].keys() for _, t_ in trackers))
     )
-    print(f"\n  {'Market':<10} {'S.Bets':>7} {'S.Hit%':>7} {'S.ROI':>7}  |  {'C.Bets':>7} {'C.Hit%':>7} {'C.ROI':>7}")
-    print(f"  {'-'*10} {'-'*7} {'-'*7} {'-'*7}  |  {'-'*7} {'-'*7} {'-'*7}")
+    print(f"\n  {'Market':<10} {'BEST.Bets':>9} {'BEST.ROI':>9}  |  {'C60.Bets':>8} {'C60.ROI':>8}")
+    print(f"  {'-'*10} {'-'*9} {'-'*9}  |  {'-'*8} {'-'*8}")
     for mkt in all_markets:
-        sd = swapped["by_market"][mkt]
-        cd = corrected["by_market"][mkt]
-        sh = round(sd["correct"] / sd["bets"] * 100, 1) if sd["bets"] > 0 else 0
-        ch = round(cd["correct"] / cd["bets"] * 100, 1) if cd["bets"] > 0 else 0
-        sr = round(sd["profit"] / sd["bets"] * 100, 1) if sd["bets"] > 0 else 0
-        cr = round(cd["profit"] / cd["bets"] * 100, 1) if cd["bets"] > 0 else 0
-        print(
-            f"  {mkt:<10} {sd['bets']:>7} {sh:>6.1f}% {sr:>+6.1f}%  |  "
-            f"{cd['bets']:>7} {ch:>6.1f}% {cr:>+6.1f}%"
-        )
+        row_parts = []
+        for _, t_ in trackers:
+            d = t_["by_market"][mkt]
+            r = round(d["profit"] / d["bets"] * 100, 1) if d["bets"] > 0 else 0
+            row_parts.append(f"{d['bets']:>9} {r:>+8.1f}%")
+        print(f"  {mkt:<10} {row_parts[0]}  |  {row_parts[1]}")
 
     # VERDICT
+    best_roi = _roi(best)
+    c60_roi = _roi(best_c60)
+    best_pnl = best["stats"]["total_profit"]
+    c60_pnl = best_c60["stats"]["total_profit"]
     print(f"\n  VERDICT:")
-    if chr_ > shr:
-        print(f"    CORRECTED wins: +{chr_ - shr:.1f}% hit rate, {croi - sroi:+.1f}% ROI")
-        print(f"    --> FIX THE BUG in prediction_engine.py lines 182-186")
-    elif shr > chr_:
-        print(f"    SWAPPED wins: +{shr - chr_:.1f}% hit rate, {sroi - croi:+.1f}% ROI")
-        print(f"    --> The 'bug' may actually help (lucky inversion)")
+    print(f"    Previous CORRECTED (30-feat, no blacklist, conf60): -24.8u (-1.4% ROI)")
+    print(f"    Previous 42-feat V2 (blacklist, conf70):           -40.5u (-5.0% ROI)")
+    print(f"    BEST (30-feat, blacklist, conf70):   {best_pnl:+.1f}u ({best_roi}% ROI)")
+    print(f"    BEST_CONF60 (30-feat, blacklist, conf60): {c60_pnl:+.1f}u ({c60_roi}% ROI)")
+    if best_roi > c60_roi:
+        print(f"    --> conf70 helps: {best_roi - c60_roi:+.1f}% ROI vs conf60")
     else:
-        print(f"    No difference — ML has no effect (alpha too high or no models?)")
+        print(f"    --> conf60 better: {c60_roi - best_roi:+.1f}% ROI advantage")
 
 
 if __name__ == "__main__":

@@ -5,15 +5,19 @@ Tier A (19 features from existing data):
 Tier B (11 features, available after OddsPapi/ClubElo):
   Elo (3), Pinnacle (6), Consensus (2)
 
+Context features (12) are computed but NOT included in FEATURE_NAMES.
+They degraded OU25 from +4.9% to -8.3% ROI in backtesting.
+Kept here for future research.
+
 Critical: all queries use before_date to prevent training data leakage.
 """
 
 import logging
-from datetime import date
+from datetime import date, timedelta
 from statistics import mean
 
 import numpy as np
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.elo_ratings import EloRating
@@ -23,11 +27,12 @@ from app.models.head_to_head import HeadToHead
 from app.models.injury import Injury
 from app.models.odds import Odds
 from app.models.standing import Standing
+from app.models.team import Team
 from app.models.team_last20 import TeamLast20
 
 logger = logging.getLogger(__name__)
 
-FEATURE_NAMES = [
+TIER_A_FEATURES = [
     # xG (7)
     "rolling_xg_for_5",
     "rolling_xg_for_10",
@@ -52,6 +57,9 @@ FEATURE_NAMES = [
     # Situational (2)
     "rest_days",
     "injuries_count",
+]
+
+TIER_B_FEATURES = [
     # Elo (3)
     "elo_home",
     "elo_away",
@@ -67,6 +75,23 @@ FEATURE_NAMES = [
     "consensus_implied_home",
     "consensus_implied_away",
 ]
+
+CONTEXT_FEATURES = [
+    "is_derby",                   # 1 if derby match, 0 otherwise
+    "derby_intensity",            # 0.0 (not derby), 0.4, 0.6, 0.8 (fierce)
+    "home_congestion_14d",        # Number of games home team played in last 14 days
+    "away_congestion_14d",        # Number of games away team played in last 14 days
+    "rest_day_diff",              # home_rest_days - away_rest_days (positive = home more rested)
+    "home_relegation_pressure",   # 0.0 to 1.0 based on position + games remaining
+    "away_relegation_pressure",   # 0.0 to 1.0
+    "home_form_trajectory",       # Goals trend: recent 3 avg minus older 3 avg
+    "away_form_trajectory",       # Same for away
+    "h2h_goal_avg",               # Average total goals in last 5 H2H meetings
+    "home_scoring_streak",        # Consecutive games with 1+ goals (0-20)
+    "away_scoring_streak",        # Same for away team
+]
+
+FEATURE_NAMES = TIER_A_FEATURES + TIER_B_FEATURES  # 30 features, no CONTEXT_FEATURES
 
 
 # ── helpers ──────────────────────────────────────────────────────────────
@@ -269,6 +294,128 @@ async def _consensus_features(f, session, fixture):
         f[feat] = 1.0 / avg if avg else None
 
 
+# ── context features ─────────────────────────────────────────────────────
+
+
+async def _context_features(f, session, fixture, league_config, before_date):
+    """12 context features derived from match context signals."""
+    from app.services.match_context import MatchContextEngine
+
+    # --- is_derby + derby_intensity ---
+    home_team = await session.get(Team, fixture.home_team_id)
+    away_team = await session.get(Team, fixture.away_team_id)
+    home_name = home_team.name.lower() if home_team else ""
+    away_name = away_team.name.lower() if away_team else ""
+
+    derby_intensity = 0.0
+    for team1_kw, team2_kw, _name, intensity in MatchContextEngine.DERBIES:
+        home_match = any(kw in home_name for kw in team1_kw)
+        away_match = any(kw in away_name for kw in team2_kw)
+        rev_home = any(kw in home_name for kw in team2_kw)
+        rev_away = any(kw in away_name for kw in team1_kw)
+        if (home_match and away_match) or (rev_home and rev_away):
+            derby_intensity = {"fierce": 0.8, "strong": 0.6, "moderate": 0.4}.get(intensity, 0.4)
+            break
+
+    f["is_derby"] = 1.0 if derby_intensity > 0 else 0.0
+    f["derby_intensity"] = derby_intensity
+
+    # --- congestion: games in last 14 days ---
+    cutoff_14d = before_date - timedelta(days=14)
+    for team_id, key in [(fixture.home_team_id, "home_congestion_14d"),
+                          (fixture.away_team_id, "away_congestion_14d")]:
+        result = await session.execute(
+            select(func.count()).select_from(TeamLast20)
+            .where(
+                TeamLast20.team_id == team_id,
+                TeamLast20.date >= cutoff_14d,
+                TeamLast20.date < before_date,
+            )
+        )
+        f[key] = float(result.scalar_one())
+
+    # --- rest day difference ---
+    rest = {}
+    for team_id, label in [(fixture.home_team_id, "home"), (fixture.away_team_id, "away")]:
+        result = await session.execute(
+            select(func.max(TeamLast20.date))
+            .where(TeamLast20.team_id == team_id, TeamLast20.date < before_date)
+        )
+        last_game = result.scalar_one_or_none()
+        rest[label] = (before_date - last_game).days if last_game else 7
+    f["rest_day_diff"] = float(rest.get("home", 7) - rest.get("away", 7))
+
+    # --- relegation pressure ---
+    if league_config and not league_config.is_international:
+        total_teams = league_config.teams
+        games_per_team = 2 * (total_teams - 1)
+        relegation_zone = max(3, total_teams // 6)
+
+        for team_id, key in [(fixture.home_team_id, "home_relegation_pressure"),
+                              (fixture.away_team_id, "away_relegation_pressure")]:
+            row = (await session.execute(
+                select(Standing.rank, Standing.played)
+                .where(
+                    Standing.team_id == team_id,
+                    Standing.league_id == fixture.league_id,
+                )
+                .order_by(Standing.season.desc())
+                .limit(1)
+            )).first()
+            if row and row[0]:
+                position = row[0]
+                played = row[1] or 0
+                remaining = games_per_team - played
+                if position > (total_teams - relegation_zone) and 0 < remaining <= 15:
+                    f[key] = min(1.0, (15 - remaining) / 12)
+                else:
+                    f[key] = 0.0
+            else:
+                f[key] = 0.0
+    else:
+        f["home_relegation_pressure"] = 0.0
+        f["away_relegation_pressure"] = 0.0
+
+    # --- form trajectory (recent 3 avg - older 3 avg from last 6 games) ---
+    for team_id, key in [(fixture.home_team_id, "home_form_trajectory"),
+                          (fixture.away_team_id, "away_form_trajectory")]:
+        rows = await _last_n(session, team_id, before_date, 6)
+        if len(rows) >= 5:
+            goals = [r.goals_for or 0 for r in rows[:5]]
+            goals.reverse()  # chronological
+            recent_avg = sum(goals[3:]) / 2
+            older_avg = sum(goals[:2]) / 2
+            f[key] = float(recent_avg - older_avg)
+        else:
+            f[key] = 0.0
+
+    # --- H2H goal average ---
+    t1, t2 = sorted((fixture.home_team_id, fixture.away_team_id))
+    h2h_rows = (await session.execute(
+        select(HeadToHead.total_goals)
+        .where(HeadToHead.team1_id == t1, HeadToHead.team2_id == t2, HeadToHead.date < before_date)
+        .order_by(HeadToHead.date.desc())
+        .limit(5)
+    )).scalars().all()
+    if h2h_rows and len(h2h_rows) >= 2:
+        totals = [g for g in h2h_rows if g is not None]
+        f["h2h_goal_avg"] = float(sum(totals) / len(totals)) if totals else None
+    else:
+        f["h2h_goal_avg"] = None
+
+    # --- scoring streaks ---
+    for team_id, key in [(fixture.home_team_id, "home_scoring_streak"),
+                          (fixture.away_team_id, "away_scoring_streak")]:
+        rows = await _last_n(session, team_id, before_date, 10)
+        streak = 0
+        for r in rows:
+            if (r.goals_for or 0) > 0:
+                streak += 1
+            else:
+                break
+        f[key] = float(streak)
+
+
 # ── public API ───────────────────────────────────────────────────────────
 
 
@@ -302,6 +449,8 @@ async def compute_features(
     await _elo_features(f, session, fixture, before_date)
     await _pinnacle_features(f, session, fixture)
     await _consensus_features(f, session, fixture)
+    # Context features computed but NOT included in FEATURE_NAMES (degraded OU25)
+    # await _context_features(f, session, fixture, league_config, before_date)
 
     return f
 
