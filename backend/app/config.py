@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     MIN_CONFIDENCE: int = 60
     MIN_EDGE: float = 0.05
     ODDS_MIN: float = 1.20
-    ODDS_MAX: float = 5.00
+    ODDS_MAX: float = 2.20
 
     model_config = {"env_file": str(_ENV_FILE), "extra": "ignore"}
 

@@ -42,7 +42,27 @@ ML_MARKETS = {"ou15", "ou25", "ou35"}
 # Markets with Poisson probabilities only (no ML)
 POISSON_ONLY_MARKETS = {"dc"}
 
-ALPHA = 0.50  # blending weight: alpha * poisson + (1 - alpha) * ml
+# Markets that can flag is_value_bet = True
+VALUE_BET_MARKETS = {"dc", "ou25"}
+
+# Markets that generate predictions but NEVER flag as value
+DISPLAY_ONLY_MARKETS = {"ou15", "ou35"}
+
+# Per-market blend weight: alpha * poisson + (1 - alpha) * ml
+MARKET_ALPHA = {
+    "dc":   1.00,   # Pure Poisson (no ML model)
+    "ou15": 0.50,   # Balanced (insufficient settled data)
+    "ou25": 0.30,   # 30/70 favoring XGBoost
+    "ou35": 1.00,   # Pure Poisson (display-only)
+}
+
+# Per-market minimum odds (override global ODDS_MIN)
+MARKET_ODDS_MIN = {
+    "dc":   1.22,
+    "ou15": 1.22,
+    "ou25": 1.20,
+    "ou35": 1.20,
+}
 
 
 class PredictionEngine:
@@ -166,8 +186,9 @@ class PredictionEngine:
                         ml_prob = float(ml_proba[idx])
 
                 # Blend
-                if ml_prob is not None:
-                    blended = ALPHA * poisson_prob + (1 - ALPHA) * ml_prob
+                alpha = MARKET_ALPHA.get(market_code, 0.50)
+                if ml_prob is not None and market_code in ML_MARKETS:
+                    blended = alpha * poisson_prob + (1 - alpha) * ml_prob
                 else:
                     blended = poisson_prob
 
@@ -215,12 +236,17 @@ class PredictionEngine:
 
                 # Value bet flag — use Pinnacle edge when available, else bookmaker edge
                 effective_edge = pinnacle_edge if pinnacle_edge is not None else edge
+                effective_min_edge = max(settings.MIN_EDGE * 100, league_config.min_edge_pct)
                 is_value = (
-                    (effective_edge * 100) >= league_config.min_edge_pct
+                    (effective_edge * 100) >= effective_min_edge
                     and confidence >= league_config.min_confidence_pct
-                    and o.value >= settings.ODDS_MIN
+                    and o.value >= MARKET_ODDS_MIN.get(market_code, settings.ODDS_MIN)
                     and o.value <= settings.ODDS_MAX
                 )
+
+                # Display-only markets NEVER flag value regardless of edge
+                if market_code in DISPLAY_ONLY_MARKETS:
+                    is_value = False
 
                 predictions.append(Prediction(
                     fixture_id=fixture_id,
