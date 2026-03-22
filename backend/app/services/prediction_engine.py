@@ -181,9 +181,12 @@ class PredictionEngine:
                 # ML probability for this selection
                 ml_prob = None
                 if ml_proba is not None and market_code in ML_MARKETS:
-                    idx = MARKETS_CONFIG[market_code]["labels"].index(label)
-                    if idx < len(ml_proba):
-                        ml_prob = float(ml_proba[idx])
+                    # predict_proba returns [P(class0=Under/No), P(class1=Over/Yes)]
+                    # "Over"/"Yes" labels → proba[1], "Under"/"No" labels → proba[0]
+                    if "Over" in label or "Yes" in label:
+                        ml_prob = float(ml_proba[1])
+                    else:
+                        ml_prob = float(ml_proba[0])
 
                 # Blend
                 alpha = MARKET_ALPHA.get(market_code, 0.50)
