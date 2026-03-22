@@ -49,6 +49,12 @@ VALUE_BET_MARKETS = {"dc", "ou25"}
 # Markets that generate predictions but NEVER flag as value
 DISPLAY_ONLY_MARKETS = {"ou15", "ou35"}
 
+# Selections that generate predictions but NEVER flag as value.
+# DC 1X is blacklisted because the Poisson model systematically
+# overestimates home+draw probability (backtest: 748 bets, -7.9% ROI).
+# DC 12 and DC X2 remain active (breakeven or profitable).
+BLACKLISTED_SELECTIONS = {("dc", "1X")}
+
 # Per-market blend weight: alpha * poisson + (1 - alpha) * ml
 MARKET_ALPHA = {
     "dc":   1.00,   # Pure Poisson (no ML model)
@@ -244,15 +250,20 @@ class PredictionEngine:
                 # Value bet flag — use Pinnacle edge when available, else bookmaker edge
                 effective_edge = pinnacle_edge if pinnacle_edge is not None else edge
                 effective_min_edge = max(settings.MIN_EDGE * 100, league_config.min_edge_pct)
+                effective_min_confidence = max(settings.MIN_CONFIDENCE, league_config.min_confidence_pct)
                 is_value = (
                     (effective_edge * 100) >= effective_min_edge
-                    and confidence >= league_config.min_confidence_pct
+                    and confidence >= effective_min_confidence
                     and o.value >= MARKET_ODDS_MIN.get(market_code, settings.ODDS_MIN)
                     and o.value <= settings.ODDS_MAX
                 )
 
                 # Display-only markets NEVER flag value regardless of edge
                 if market_code in DISPLAY_ONLY_MARKETS:
+                    is_value = False
+
+                # Blacklisted selections generate predictions but never flag value
+                if (market_code, label) in BLACKLISTED_SELECTIONS:
                     is_value = False
 
                 predictions.append(Prediction(

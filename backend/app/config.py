@@ -41,7 +41,7 @@ class Settings(BaseSettings):
 
     # Model
     KELLY_MULTIPLIER: float = 0.25
-    MIN_CONFIDENCE: int = 60
+    MIN_CONFIDENCE: int = 70
     MIN_EDGE: float = 0.05
     ODDS_MIN: float = 1.20
     ODDS_MAX: float = 2.20
