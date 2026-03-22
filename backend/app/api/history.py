@@ -58,7 +58,7 @@ async def get_prediction_history(
     period: Optional[str] = Query(None, pattern="^(yesterday|3d|7d|30d|all)$"),
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
-    market: Optional[str] = Query(None, pattern="^(dc|ou25|all)$"),
+    market: Optional[str] = Query(None, pattern="^(dc|ou15|ou25|ou35|all)$"),
     value_only: bool = True,
     db: AsyncSession = Depends(get_db),
 ):
@@ -78,8 +78,8 @@ async def get_prediction_history(
     if market and market != "all":
         conditions.append(Prediction.market == market)
     else:
-        # Only show DC and OU25 markets (the value-bet markets)
-        conditions.append(Prediction.market.in_(["dc", "ou25"]))
+        # Show all value-bet markets
+        conditions.append(Prediction.market.in_(["dc", "ou15", "ou25", "ou35"]))
 
     # --- Settled bets (FT fixtures with is_correct evaluated) ---
     settled_q = (

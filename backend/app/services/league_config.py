@@ -52,11 +52,11 @@ class LeagueConfig:
 LEAGUES: List[LeagueConfig] = [
     # ── TIER 1: CORE ──
     LeagueConfig("Bundesliga", "Germany", 78, Tier.CORE, 1, 18, 306, 3.12,
-                 8, 5, ALL_MARKETS, 3.0, 68, oddspapi_tournament_id=35),
+                 8, 5, ALL_MARKETS, 10.0, 68, oddspapi_tournament_id=35),
     LeagueConfig("Premier League", "England", 39, Tier.CORE, 1, 20, 380, 2.84,
                  8, 5, ALL_MARKETS, 4.0, 70, oddspapi_tournament_id=17),
     LeagueConfig("Eredivisie", "Netherlands", 88, Tier.CORE, 1, 18, 306, 3.05,
-                 8, 5, ALL_MARKETS, 3.0, 68, oddspapi_tournament_id=37),
+                 8, 5, ALL_MARKETS, 8.0, 68, oddspapi_tournament_id=37),
     LeagueConfig("Ligue 1", "France", 61, Tier.CORE, 1, 18, 306, 2.60,
                  8, 5, ALL_MARKETS, 3.0, 68, oddspapi_tournament_id=34),
 
@@ -68,13 +68,13 @@ LEAGUES: List[LeagueConfig] = [
 
     # ── TIER 3: EDGE ──
     LeagueConfig("Championship", "England", 40, Tier.EDGE, 2, 24, 552, 2.70,
-                 8, 5, ALL_MARKETS, 2.5, 66, oddspapi_tournament_id=188),
+                 8, 5, ALL_MARKETS, 15.0, 66, oddspapi_tournament_id=188),
     LeagueConfig("2. Bundesliga", "Germany", 79, Tier.EDGE, 2, 18, 306, 2.95,
                  8, 5, ALL_MARKETS, 2.5, 66, oddspapi_tournament_id=44),
     LeagueConfig("Primeira Liga", "Portugal", 94, Tier.EDGE, 1, 18, 306, 2.55,
                  8, 5, ALL_MARKETS, 3.0, 66, oddspapi_tournament_id=238),
     LeagueConfig("Belgian Pro League", "Belgium", 144, Tier.EDGE, 1, 16, 240, 2.90,
-                 8, 5, ALL_MARKETS, 2.5, 66, oddspapi_tournament_id=38),
+                 8, 5, ALL_MARKETS, 12.0, 66, oddspapi_tournament_id=38),
     LeagueConfig("Austrian Bundesliga", "Austria", 218, Tier.EDGE, 1, 12, 192, 3.10,
                  7, 5, ALL_MARKETS, 2.5, 66, oddspapi_tournament_id=45),
     LeagueConfig("Swiss Super League", "Switzerland", 207, Tier.EDGE, 1, 12, 192, 3.33,

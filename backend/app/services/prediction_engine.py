@@ -44,10 +44,10 @@ ML_MARKETS = {"ou15", "ou25", "ou35"}
 POISSON_ONLY_MARKETS = {"dc"}
 
 # Markets that can flag is_value_bet = True
-VALUE_BET_MARKETS = {"dc", "ou25"}
+VALUE_BET_MARKETS = {"dc", "ou15", "ou25", "ou35"}
 
 # Markets that generate predictions but NEVER flag as value
-DISPLAY_ONLY_MARKETS = {"ou15", "ou35"}
+DISPLAY_ONLY_MARKETS = set()
 
 # Selections that generate predictions but NEVER flag as value.
 # DC 1X is blacklisted because the Poisson model systematically
@@ -58,9 +58,9 @@ BLACKLISTED_SELECTIONS = {("dc", "1X")}
 # Per-market blend weight: alpha * poisson + (1 - alpha) * ml
 MARKET_ALPHA = {
     "dc":   1.00,   # Pure Poisson (no ML model)
-    "ou15": 0.50,   # Balanced (insufficient settled data)
-    "ou25": 0.30,   # 30/70 favoring XGBoost
-    "ou35": 1.00,   # Pure Poisson (display-only)
+    "ou15": 0.00,   # Pure XGBoost (backtest: Poisson overconfident for OU)
+    "ou25": 0.00,   # Pure XGBoost (backtest: 66% hit, +95.6u, 18.5% ROI)
+    "ou35": 0.00,   # Pure XGBoost (backtest: Poisson overconfident for OU)
 }
 
 # Per-market minimum odds (override global ODDS_MIN)
