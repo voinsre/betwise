@@ -32,11 +32,11 @@ interface PredictionRow {
   poisson_probability: number;
   ml_probability: number | null;
   blended_probability: number;
-  best_odd: number;
-  best_bookmaker: string;
-  implied_probability: number;
-  edge: number;
-  expected_value: number;
+  best_odd: number | null;
+  best_bookmaker: string | null;
+  implied_probability: number | null;
+  edge: number | null;
+  expected_value: number | null;
   confidence_score: number;
   is_value_bet: boolean;
 }
@@ -157,7 +157,7 @@ export default function AdminDashboard() {
       : 0;
   const avgEdge =
     filteredData.length > 0
-      ? filteredData.reduce((s, v) => s + v.edge, 0) / filteredData.length
+      ? filteredData.reduce((s, v) => s + (v.edge ?? 0), 0) / filteredData.length
       : 0;
 
   if (loading) {
@@ -422,9 +422,9 @@ function FixtureTableRow({
             {row.market}
           </span>
         </td>
-        <td className="px-6 py-3 text-sm text-right font-mono text-white">{row.best_odd.toFixed(2)}</td>
-        <td className={`px-6 py-3 text-sm text-right font-mono ${edgeColor(row.edge)}`}>
-          +{(row.edge * 100).toFixed(1)}%
+        <td className="px-6 py-3 text-sm text-right font-mono text-white">{row.best_odd != null ? row.best_odd.toFixed(2) : "-"}</td>
+        <td className={`px-6 py-3 text-sm text-right font-mono ${edgeColor(row.edge ?? 0)}`}>
+          {row.edge != null ? `+${(row.edge * 100).toFixed(1)}%` : "-"}
         </td>
         <td className="px-6 py-3 text-center">
           <span className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full ${confidenceColor(row.confidence_score)}`}>
@@ -477,15 +477,13 @@ function FixtureTableRow({
                         {(p.blended_probability * 100).toFixed(1)}%
                       </td>
                       <td className="py-2 text-right font-mono text-white">
-                        {p.best_odd.toFixed(2)}
+                        {p.best_odd != null ? p.best_odd.toFixed(2) : "-"}
                       </td>
-                      <td className={`py-2 text-right font-mono ${edgeColor(p.edge)}`}>
-                        {p.edge > 0 ? "+" : ""}
-                        {(p.edge * 100).toFixed(1)}%
+                      <td className={`py-2 text-right font-mono ${edgeColor(p.edge ?? 0)}`}>
+                        {p.edge != null ? `${p.edge > 0 ? "+" : ""}${(p.edge * 100).toFixed(1)}%` : "-"}
                       </td>
-                      <td className={`py-2 text-right font-mono ${p.expected_value > 0 ? "text-accent-green" : "text-accent-red"}`}>
-                        {p.expected_value > 0 ? "+" : ""}
-                        {p.expected_value.toFixed(3)}
+                      <td className={`py-2 text-right font-mono ${(p.expected_value ?? 0) > 0 ? "text-accent-green" : "text-accent-red"}`}>
+                        {p.expected_value != null ? `${p.expected_value > 0 ? "+" : ""}${p.expected_value.toFixed(3)}` : "-"}
                       </td>
                       <td className="py-2 text-center">
                         <span className={`text-xs ${confidenceColor(p.confidence_score)} px-2 py-0.5 rounded-full`}>
