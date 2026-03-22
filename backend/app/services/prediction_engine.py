@@ -26,6 +26,7 @@ from app.services.league_config import get_league_by_api_id, is_market_active
 from app.services.ml_model import MLPredictor
 from app.services.pinnacle_sync import get_pinnacle_odds_for_fixture, _pinnacle_key
 from app.services.poisson_model import PoissonPredictor
+from app.services.probability_calibrator import calibrate_probability
 
 logger = logging.getLogger(__name__)
 
@@ -194,6 +195,9 @@ class PredictionEngine:
                     blended = alpha * poisson_prob + (1 - alpha) * ml_prob
                 else:
                     blended = poisson_prob
+
+                # Apply isotonic calibration (corrects systematic over/under-prediction)
+                blended = calibrate_probability(market_code, blended)
 
                 # Best odds for this selection
                 odds_key = (market_code, label)
