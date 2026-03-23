@@ -159,6 +159,37 @@ export default function HistoryView() {
         </div>
       )}
 
+      {/* Won / Lost bar */}
+      {summary && summary.total_bets > 0 && (
+        <div className="mb-6 bg-brand-card border border-brand-border rounded-xl p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-4 text-sm">
+              <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-accent-green" />
+                <span className="text-accent-green font-semibold">{summary.correct}</span>
+                <span className="text-gray-500">Won</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-accent-red" />
+                <span className="text-accent-red font-semibold">{summary.total_bets - summary.correct}</span>
+                <span className="text-gray-500">Lost</span>
+              </span>
+            </div>
+            <span className="text-xs text-gray-500">{summary.total_bets} settled</span>
+          </div>
+          <div className="w-full h-2.5 bg-brand-surface rounded-full overflow-hidden flex">
+            <div
+              className="h-full bg-accent-green rounded-l-full transition-all duration-500"
+              style={{ width: `${(summary.correct / summary.total_bets) * 100}%` }}
+            />
+            <div
+              className="h-full bg-accent-red rounded-r-full transition-all duration-500"
+              style={{ width: `${((summary.total_bets - summary.correct) / summary.total_bets) * 100}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Market filter pills */}
       <div className="flex flex-wrap items-center gap-2 mb-6">
         {["all", "dc", "ou25"].map((m) => (
