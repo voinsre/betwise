@@ -71,6 +71,15 @@ MARKET_ODDS_MIN = {
     "ou35": 1.20,
 }
 
+# Per-market maximum odds (override global ODDS_MAX).
+# OU markets need wider range — odds commonly exceed 2.20.
+MARKET_ODDS_MAX = {
+    "dc":   2.20,
+    "ou15": 2.60,
+    "ou25": 2.60,
+    "ou35": 2.60,
+}
+
 
 class PredictionEngine:
     """Orchestrates Poisson + ML predictions for all markets."""
@@ -255,7 +264,7 @@ class PredictionEngine:
                     (effective_edge * 100) >= effective_min_edge
                     and confidence >= effective_min_confidence
                     and o.value >= MARKET_ODDS_MIN.get(market_code, settings.ODDS_MIN)
-                    and o.value <= settings.ODDS_MAX
+                    and o.value <= MARKET_ODDS_MAX.get(market_code, settings.ODDS_MAX)
                 )
 
                 # Display-only markets NEVER flag value regardless of edge

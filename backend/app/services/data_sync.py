@@ -517,9 +517,14 @@ class DataSyncService:
         now = datetime.now(timezone.utc)
 
         async with self.session_factory() as session:
-            # Delete existing odds for this fixture, insert fresh
+            # Delete existing odds for this fixture, insert fresh.
+            # Preserve Pinnacle rows — they are synced separately by pinnacle_sync.py
+            # and should not be wiped by the API-Football odds refresh.
             await session.execute(
-                delete(Odds).where(Odds.fixture_id == fixture_id)
+                delete(Odds).where(
+                    Odds.fixture_id == fixture_id,
+                    Odds.bookmaker_name != "Pinnacle",
+                )
             )
 
             count = 0
