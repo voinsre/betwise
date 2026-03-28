@@ -314,7 +314,7 @@ export default function AdminDashboard() {
                 {fixtureRows.map((row) => {
                   const isExpanded = expandedFixture === row.fixture_id;
                   const fixturePreds = allPredictions.filter(
-                    (p) => p.fixture_id === row.fixture_id && selectedMarkets.has(p.market)
+                    (p) => p.fixture_id === row.fixture_id
                   );
                   return (
                     <FixtureTableRow

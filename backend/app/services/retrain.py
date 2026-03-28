@@ -289,6 +289,46 @@ def _save_model(model: xgb.XGBClassifier, market: str, metrics: dict,
                 model_path.name, metrics["accuracy"] * 100, metrics["log_loss"])
 
 
+def rebuild_calibrators(
+    models: dict[str, xgb.XGBClassifier],
+    X_val: np.ndarray,
+    labels_val: dict[str, list],
+    val_ids: list[int],
+) -> dict:
+    """
+    Rebuild isotonic calibrators using newly trained models on validation data.
+    Called automatically after retrain so calibrators stay aligned with current models.
+    """
+    import pickle
+
+    from sklearn.isotonic import IsotonicRegression
+
+    cal_dir = MODEL_DIR.parent / "calibrators"
+    cal_dir.mkdir(parents=True, exist_ok=True)
+    results = {}
+
+    for market, model in models.items():
+        X_m, y_m, _ = filter_for_market(X_val, labels_val[market], val_ids)
+        if len(X_m) < 100:
+            logger.warning("Calibrator %s: only %d samples, skipping", market, len(X_m))
+            continue
+
+        # Get model's predicted probabilities for the positive class (Over/Yes)
+        y_pred_proba = model.predict_proba(X_m)[:, 1]
+
+        calibrator = IsotonicRegression(y_min=0.01, y_max=0.99, out_of_bounds="clip")
+        calibrator.fit(y_pred_proba, y_m)
+
+        cal_path = cal_dir / f"{market}_calibrator.pkl"
+        with open(cal_path, "wb") as f:
+            pickle.dump(calibrator, f)
+
+        results[market] = {"samples": len(X_m)}
+        logger.info("Rebuilt calibrator for %s (%d samples) -> %s", market, len(X_m), cal_path)
+
+    return results
+
+
 async def retrain_all_models(
     session_factory: async_sessionmaker,
     triggered_by: str = "celery_beat",
@@ -456,6 +496,24 @@ async def retrain_all_models(
                 error_message=str(e), duration_seconds=round(train_dur, 1),
                 triggered_by=triggered_by,
             )
+
+    # Rebuild isotonic calibrators with newly trained models
+    if succeeded > 0:
+        try:
+            trained_models = {}
+            for market in MARKETS:
+                model_path = MODEL_DIR / f"{market}_model.json"
+                if model_path.exists():
+                    m = xgb.XGBClassifier()
+                    m.load_model(str(model_path))
+                    trained_models[market] = m
+            if trained_models:
+                cal_results = rebuild_calibrators(
+                    trained_models, X_val_all, labels_val, val_ids
+                )
+                logger.info("Calibrator rebuild: %s", cal_results)
+        except Exception as e:
+            logger.error("Calibrator rebuild failed: %s", e, exc_info=True)
 
     logger.info("Retrain complete: %d/%d markets succeeded. Results: %s",
                 succeeded, len(MARKETS), results)

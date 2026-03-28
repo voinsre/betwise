@@ -72,5 +72,12 @@ def get_loaded_calibrators() -> list:
     return list(_calibrators.keys())
 
 
+def reload_calibrators():
+    """Re-read calibrator files from disk. Call after retrain rebuilds them."""
+    global _calibrators
+    _calibrators.clear()
+    _load_calibrators()
+
+
 # Load calibrators when module is imported
 _load_calibrators()
