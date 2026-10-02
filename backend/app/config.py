@@ -26,7 +26,8 @@ class Settings(BaseSettings):
     API_FOOTBALL_KEY: str = ""
     API_FOOTBALL_BASE_URL: str = "https://v3.football.api-sports.io"
 
-    # Google Gemini
+    # Google Gemini: paused unless explicitly enabled after approval.
+    GEMINI_API_ENABLED: bool = False
     GEMINI_API_KEY: str = ""
 
     # OddsPapi

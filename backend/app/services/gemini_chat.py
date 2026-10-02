@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.orm import aliased
 
 from app.config import settings
+from app.services.gemini_policy import require_gemini_enabled
 from app.models.fixture import Fixture
 from app.models.league import League
 from app.models.team import Team
@@ -204,6 +205,7 @@ class GeminiChatService:
     """Gemini 2.0 Flash chat with function calling for BetWise."""
 
     def __init__(self, session_factory: async_sessionmaker):
+        require_gemini_enabled()
         self.session_factory = session_factory
         self._engine: PredictionEngine | None = None
         self._builder: TicketBuilder | None = None
@@ -237,6 +239,7 @@ class GeminiChatService:
         Returns:
             (response_text, updated_history, structured_data)
         """
+        require_gemini_enabled()
         # Convert history to Gemini format
         gemini_history = []
         for msg in history:
@@ -275,6 +278,7 @@ class GeminiChatService:
         Gemini may call functions multiple times before giving a text response.
         Returns (text_response, structured_data).
         """
+        require_gemini_enabled()
         response = chat_session.send_message(message)
         structured_data: dict | None = None
 
@@ -308,6 +312,7 @@ class GeminiChatService:
             result_serializable = self._make_serializable(result)
 
             # Send the function result back to Gemini
+            require_gemini_enabled()
             response = chat_session.send_message(
                 genai.protos.Content(
                     parts=[
