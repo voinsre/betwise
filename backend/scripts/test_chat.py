@@ -32,9 +32,14 @@ logging.getLogger("app.services.gemini_chat").setLevel(logging.INFO)
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.services.gemini_chat import GeminiChatService
+from app.services.gemini_policy import is_gemini_enabled
 
 
 async def main():
+    if not is_gemini_enabled():
+        print("SKIPPED: Gemini API calls are paused.")
+        return
+
     db_url = os.environ["DATABASE_URL"]
     engine = create_async_engine(db_url, echo=False)
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -49,7 +54,7 @@ async def main():
         await engine.dispose()
         return
 
-    print(f"  Gemini API key: {gemini_key[:8]}...{gemini_key[-4:]}")
+    print("  Gemini API key: configured")
 
     service = GeminiChatService(session_factory)
     history = []

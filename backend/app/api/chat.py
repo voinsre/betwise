@@ -7,6 +7,7 @@ from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.services.gemini_policy import GEMINI_PAUSED_REASON, is_gemini_enabled
 from app.database import async_session, get_db
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,14 @@ async def chat(
     db: AsyncSession = Depends(get_db),
 ):
     """Send message to Gemini chat with function calling."""
+    if not is_gemini_enabled():
+        return {
+            "response": "AI chat is temporarily paused.",
+            "history": request_body.history,
+            "paused": True,
+            "reason": GEMINI_PAUSED_REASON,
+        }
+
     if not settings.GEMINI_API_KEY:
         return {"response": "Chat service is not configured."}
 
